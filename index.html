@@ -147,11 +147,12 @@
         // --- Player Object (The Support Engineer) ---
         const player = {
             x: 0, y: 0, width: 40, height: 50,
-            speed: 5,
+            speed: 7.5,
             hp: 100, maxHp: 100,
             level: 1, xp: 0, xpToNextLevel: 10,
             angle: 0,
-            fireRate: 20, fireCooldown: 0,
+            fireRate: 14, 
+            fireCooldown: 0,
             damage: 10,
             projectileSpeed: 12, projectileSize: 20,
             luck: 1, 
@@ -181,6 +182,14 @@
             { id: 'luckUp', name: 'Good Karma', description: '+1 Luck (better ticket drops)', apply: (p) => { p.luck += 1; } },
             { id: 'escalateToDev', name: 'Escalate to Dev', description: 'A new Dev joins your team!', apply: () => { spawnDev(); } },
             { id: 'useAI', name: 'Use AI', description: 'Unleash an AI blast, clearing 90% of on-screen issues!', type: 'special', apply: () => { activateAIBlast(); } }
+        ];
+
+        const angryPhrases = [
+            ["It's not", "printing!"],
+            ["I hate", "this printer!"],
+            ["Where is", "my document?!"],
+            ["Just WORK!"],
+            ["ARGHHH!!"]
         ];
 
         // --- Utility Functions ---
@@ -231,7 +240,7 @@
             resizeCanvas();
             Object.assign(player, {
                 hp: 100, maxHp: 100, level: 1, xp: 0, xpToNextLevel: 10,
-                speed: 5, damage: 10, fireRate: 20, projectileSpeed: 12, projectileSize: 20, luck: 1,
+                speed: 7.5, damage: 10, fireRate: 14, projectileSpeed: 12, projectileSize: 20, luck: 1,
                 powerUps: {}
             });
             player.x = world.width / 2;
@@ -557,7 +566,7 @@
                 x: deskTarget.x, y: deskTarget.y,
                 animationFrame: Math.floor(Math.random() * 100),
                 state: 'working', // Start working immediately
-                stateTimer: (2 + Math.random() * 3) * 60, // 2-5 seconds
+                stateTimer: (1 + Math.random() * 2) * 60, // 1-3 seconds
                 deskTarget: deskTarget,
                 printerTarget: null,
                 frustrationTimer: 0,
@@ -566,14 +575,14 @@
             if (type === 'urgent') {
                 Object.assign(enemyData, {
                     width: 40, height: 50, type: 'urgent',
-                    speed: 1.5 + difficultyMultiplier,
+                    speed: (1.5 + difficultyMultiplier) * 1.5,
                     hp: 30 * difficultyMultiplier, maxHp: 30 * difficultyMultiplier,
                     damage: 15, xpValue: 3,
                 });
             } else {
                 Object.assign(enemyData, {
                     width: 40, height: 50, type: 'standard',
-                    speed: 2.5 + difficultyMultiplier,
+                    speed: (2.5 + difficultyMultiplier) * 1.5,
                     hp: 15 * difficultyMultiplier, maxHp: 15 * difficultyMultiplier,
                     damage: 5, xpValue: 1,
                 });
@@ -640,7 +649,7 @@
                         projectiles.splice(j, 1);
                         if (e.hp <= 0) {
                             if (e.deskTarget) e.deskTarget.occupied = false;
-                            if (Math.random() < 0.1) spawnPowerUp(e.x, e.y); // 10% drop chance
+                            if (Math.random() < 0.2) spawnPowerUp(e.x, e.y); // 20% drop chance
                             xpGems.push({ x: e.x + e.width / 2, y: e.y + e.height / 2, value: e.xpValue });
                             enemies.splice(i, 1);
                             score++;
@@ -700,19 +709,31 @@
                 ctx.arc(0, -e.height/2, e.width/2.5, 0, Math.PI * 2);
                 ctx.fill();
 
-                if (e.state === 'working') {
+                if (e.state === 'working' || e.state === 'usingPrinter') {
+                    const text = e.state === 'working' ? 'Typing...' : "Why can't I release my print job?! ....arghh";
+                    const bubbleWidth = e.state === 'working' ? 140 : 140;
+                    const bubbleHeight = e.state === 'working' ? 30 : 70;
+                    const fontSize = e.state === 'working' ? 12 : 8;
+
                     ctx.fillStyle = 'white';
                     ctx.strokeStyle = 'black';
                     ctx.lineWidth = 2;
                     ctx.beginPath();
-                    ctx.roundRect(-20, -e.height, 40, 30, 10);
+                    ctx.roundRect(-bubbleWidth/2, -e.height - (bubbleHeight - 30), bubbleWidth, bubbleHeight, 10);
                     ctx.fill();
                     ctx.stroke();
                     ctx.fillStyle = 'black';
-                    ctx.font = `20px "Press Start 2P"`;
+                    ctx.font = `${fontSize}px "Press Start 2P"`;
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
-                    ctx.fillText('...', 0, -e.height + 15);
+                    if (e.state === 'working') {
+                         ctx.fillText(text, 0, -e.height - (bubbleHeight - 30) + 15);
+                    } else {
+                        const lines = ["Why can't I", "release my", "print job?!", "...arghh"];
+                        lines.forEach((line, i) => {
+                            ctx.fillText(line, 0, -e.height - (bubbleHeight - 30) + 12 + (i * 14));
+                        });
+                    }
                 }
 
                 if (e.frustrationTimer > 0) {
@@ -776,7 +797,7 @@
         function levelUp() {
             player.level++;
             player.xp -= player.xpToNextLevel;
-            player.xpToNextLevel = Math.floor(player.xpToNextLevel * 1.5);
+            player.xpToNextLevel = Math.floor(player.xpToNextLevel * 1.3);
             player.hp = player.maxHp;
             setGameState('levelUp');
             presentUpgradeOptions();
@@ -830,24 +851,57 @@
         // --- Drawing the Background ---
         function generateBackground() {
             backgroundScenery = [];
-            const deskWidth = 100, deskHeight = 60, padding = 150; // Increased padding
-            for(let y = padding; y < world.height - padding - deskHeight; y += deskHeight + padding * 1.5) {
-                for(let x = padding; x < world.width - padding - deskWidth; x += deskWidth + padding) {
-                    backgroundScenery.push({ type: 'desk', x, y, width: deskWidth, height: deskHeight, occupied: false });
-                    if (Math.random() < 0.15) { // MFDs are rarer
-                        const mfdX = x + deskWidth + (padding / 2) - 20;
-                        const mfdY = y;
-                        if (mfdX < world.width - padding) {
-                            backgroundScenery.push({type: 'mfd', x: mfdX, y: mfdY });
+            const deskWidth = 100, deskHeight = 60, padding = 150;
+            const clusterWidth = (deskWidth * 3);
+            const clusterHeight = (deskHeight * 2);
+            const clusterPadding = 50;
+
+            for (let y = padding; y < world.height - padding - clusterHeight; y += clusterHeight + padding) {
+                for (let x = padding; x < world.width - padding - clusterWidth; x += clusterWidth + padding) {
+                    // Place a 3x2 cluster
+                    for (let row = 0; row < 2; row++) {
+                        for (let col = 0; col < 3; col++) {
+                            const deskX = x + col * deskWidth;
+                            const deskY = y + row * deskHeight;
+                            backgroundScenery.push({ type: 'desk', x: deskX, y: deskY, width: deskWidth, height: deskHeight, occupied: false });
                         }
-                    } else if (Math.random() < 0.3) { 
-                        const plantX = x + deskWidth + (padding / 2) - 10;
-                        const plantY = y + deskHeight / 2;
-                        if (plantX < world.width - padding) {
-                             backgroundScenery.push({ type: 'plant', x: plantX, y: plantY });
+                    }
+                     // Place a plant or trash can in the aisle to the right
+                    const decorX = x + clusterWidth + (padding / 2) - 10;
+                    const decorY = y + clusterHeight / 2;
+                    if (decorX < world.width - padding) {
+                        if (Math.random() < 0.5) {
+                            backgroundScenery.push({ type: 'plant', x: decorX, y: decorY });
+                        } else {
+                            backgroundScenery.push({ type: 'trashcan', x: decorX, y: decorY });
                         }
                     }
                 }
+            }
+            
+            // Place exactly 20 MFDs in random empty spots
+            const mfdCount = 20;
+            let placedMfds = 0;
+            let attempts = 0;
+            while(placedMfds < mfdCount && attempts < 500) {
+                const randX = Math.random() * world.width;
+                const randY = Math.random() * world.height;
+                
+                let isOccupied = false;
+                for (const item of backgroundScenery) {
+                    const itemRect = {x: item.x, y: item.y, width: item.width || 40, height: item.height || 80};
+                    const mfdRect = {x: randX, y: randY, width: 40, height: 80};
+                    if (checkCollision(itemRect, mfdRect)) {
+                        isOccupied = true;
+                        break;
+                    }
+                }
+
+                if (!isOccupied) {
+                    backgroundScenery.push({type: 'mfd', x: randX, y: randY });
+                    placedMfds++;
+                }
+                attempts++;
             }
         }
 
@@ -878,6 +932,16 @@
                     ctx.fillRect(item.x - 5, item.y, 50, 20);
                     ctx.fillStyle = 'white'; // Paper tray
                     ctx.fillRect(item.x + 5, item.y + 50, 30, 5);
+                } else if (item.type === 'trashcan') {
+                    ctx.fillStyle = '#6b7280'; // Grey
+                    ctx.beginPath();
+                    ctx.ellipse(item.x + 15, item.y + 28, 15, 5, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillRect(item.x, item.y, 30, 30);
+                    ctx.fillStyle = '#4b5563'; // Darker grey rim
+                    ctx.beginPath();
+                    ctx.ellipse(item.x + 15, item.y, 15, 5, 0, 0, Math.PI * 2);
+                    ctx.fill();
                 }
             });
         }
@@ -929,7 +993,7 @@
         function startNextWave() {
             wave++;
             difficultyMultiplier = 1 + (wave * 0.1);
-            const numEnemies = 5 + wave * 2;
+            const numEnemies = 10 + wave * 2;
             for (let i = 0; i < numEnemies; i++) {
                 spawnEnemy();
             }
