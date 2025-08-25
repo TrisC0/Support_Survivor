@@ -51,7 +51,7 @@
             <div>Sanity: <span id="hp">100</span></div>
             <div>LVL: <span id="level">1</span></div>
         </div>
-        <div id="timer" class="ui-element">TIME: 00:00</div>
+        <div id="wave" class="ui-element">WAVE: 1</div>
         <div id="score" class="ui-element">TICKETS: 0</div>
     </div>
     
@@ -62,6 +62,9 @@
             <span class="absolute w-full text-center top-0 text-white text-sm font-bold" style="text-shadow: 1px 1px #000;">KNOWLEDGE</span>
         </div>
     </div>
+
+    <!-- Minimap -->
+    <canvas id="minimapCanvas" class="absolute top-4 right-4 border-2 border-black bg-gray-500 bg-opacity-50 rounded-lg pointer-events-none"></canvas>
 
     <!-- Start/Game Over/Level Up Screens -->
     <div id="modal" class="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center text-white text-center p-4">
@@ -77,7 +80,7 @@
             <h1 class="text-6xl mb-4 text-red-500" style="text-shadow: 4px 4px #000;">GAME OVER</h1>
             <p class="text-2xl mb-2">You were buried in tickets!</p>
             <p class="text-xl mb-4">Tickets Closed: <span id="finalScore" class="text-yellow-300">0</span></p>
-            <p class="text-xl mb-8">Time Survived: <span id="finalTime" class="text-yellow-300">00:00</span></p>
+            <p class="text-xl mb-8">Wave Reached: <span id="finalWave" class="text-yellow-300">1</span></p>
             <button id="restartButton" class="bg-green-500 hover:bg-green-400 text-black font-bold py-4 px-8 rounded-lg text-2xl border-b-4 border-green-700 hover:border-green-500">START NEW SHIFT</button>
         </div>
 
@@ -106,11 +109,12 @@
             upgradeOptions: document.getElementById('upgradeOptions'),
             hp: document.getElementById('hp'),
             level: document.getElementById('level'),
-            timer: document.getElementById('timer'),
+            wave: document.getElementById('wave'),
             score: document.getElementById('score'),
             finalScore: document.getElementById('finalScore'),
-            finalTime: document.getElementById('finalTime'),
+            finalWave: document.getElementById('finalWave'),
             xpBar: document.getElementById('xpBar'),
+            minimapCanvas: document.getElementById('minimapCanvas'),
         };
 
         // --- Game State ---
@@ -120,12 +124,25 @@
         let projectiles = [];
         let enemies = [];
         let xpGems = [];
-        let gameTime = 0;
+        let powerUps = [];
         let score = 0;
-        let enemySpawnTimer = 0;
-        let enemySpawnInterval = 120;
-        let difficultyMultiplier = 1;
         let backgroundScenery = [];
+        let aiUpgradeUsed = false;
+        let devAllies = [];
+        let wave = 0;
+        let waveMessage = { text: '', timer: 0, color: 'white' };
+        let difficultyMultiplier = 1;
+
+        const world = {
+            width: 0,
+            height: 0,
+            mapScale: 2.5
+        };
+
+        const camera = {
+            x: 0,
+            y: 0
+        };
 
         // --- Player Object (The Support Engineer) ---
         const player = {
@@ -140,36 +157,64 @@
             luck: 1, 
             isInvincible: false, invincibilityTimer: 0, invincibilityDuration: 60,
             animationFrame: 0, isMoving: false,
+            powerUps: {},
+            attackAnimTimer: 0,
+        };
+        
+        // --- AI Blast Object ---
+        const aiBlast = {
+            active: false,
+            radius: 0,
+            maxRadius: 0,
+            duration: 45, // 0.75 second animation
+            timer: 0,
         };
 
         // --- Upgrade Definitions (Themed for Support) ---
         const upgrades = [
             { id: 'hpUp', name: 'Resilience Training', description: '+20 Max Sanity', apply: (p) => { p.maxHp += 20; p.hp += 20; } },
             { id: 'damageUp', name: 'Improved Troubleshooting', description: '+5 Resolution Power', apply: (p) => { p.damage += 5; } },
-            { id: 'fireRateUp', name: 'Faster Typing Speed', description: 'Close tickets 15% faster', apply: (p) => { p.fireRate *= 0.85; } },
+            { id: 'fireRateUp', name: 'Faster Typing Speed', description: 'Close tickets 50% faster', apply: (p) => { p.fireRate *= 0.50; } },
             { id: 'speedUp', name: 'Ergonomic Chair', description: '+10% Movement Speed', apply: (p) => { p.speed *= 1.1; } },
             { id: 'projectileSpeedUp', name: 'Quick KB Search', description: 'Solutions travel 15% faster', apply: (p) => { p.projectileSpeed *= 1.15; } },
             { id: 'projectileSizeUp', name: 'Comprehensive KB Article', description: 'Solutions are 20% bigger', apply: (p) => { p.projectileSize *= 1.2; } },
-            { id: 'luckUp', name: 'Good Karma', description: '+1 Luck (better ticket drops)', apply: (p) => { p.luck += 1; } }
+            { id: 'luckUp', name: 'Good Karma', description: '+1 Luck (better ticket drops)', apply: (p) => { p.luck += 1; } },
+            { id: 'escalateToDev', name: 'Escalate to Dev', description: 'A new Dev joins your team!', apply: () => { spawnDev(); } },
+            { id: 'useAI', name: 'Use AI', description: 'Unleash an AI blast, clearing 90% of on-screen issues!', type: 'special', apply: () => { activateAIBlast(); } }
         ];
 
         // --- Utility Functions ---
         function resizeCanvas() {
             canvas.width = window.innerWidth * 0.9;
             canvas.height = window.innerHeight * 0.9;
-            player.x = canvas.width / 2;
-            player.y = canvas.height / 2;
+            world.width = canvas.width * world.mapScale;
+            world.height = canvas.height * world.mapScale;
+            
+            const minimap = ui.minimapCanvas;
+            minimap.width = 200;
+            minimap.height = 200 * (world.height / world.width);
+
+            if (gameState === 'start') {
+                player.x = world.width / 2;
+                player.y = world.height / 2;
+            }
             generateBackground();
         }
 
-        function getRandomPositionOutsideCanvas() {
-            const side = Math.floor(Math.random() * 4);
-            let x, y;
-            if (side === 0) { x = Math.random() * canvas.width; y = -50; }
-            else if (side === 1) { x = canvas.width + 50; y = Math.random() * canvas.height; }
-            else if (side === 2) { x = Math.random() * canvas.width; y = canvas.height + 50; }
-            else { x = -50; y = Math.random() * canvas.height; }
-            return { x, y };
+        function findNearestObject(x, y, type) {
+            const objects = backgroundScenery.filter(item => item.type === type && !item.occupied);
+            if (objects.length === 0) return null;
+
+            let nearest = null;
+            let nearestDist = Infinity;
+            objects.forEach(obj => {
+                const dist = Math.hypot(x - obj.x, y - obj.y);
+                if (dist < nearestDist) {
+                    nearestDist = dist;
+                    nearest = obj;
+                }
+            });
+            return nearest;
         }
 
         function getAngle(x1, y1, x2, y2) { return Math.atan2(y2 - y1, x2 - x1); }
@@ -187,14 +232,20 @@
             Object.assign(player, {
                 hp: 100, maxHp: 100, level: 1, xp: 0, xpToNextLevel: 10,
                 speed: 5, damage: 10, fireRate: 20, projectileSpeed: 12, projectileSize: 20, luck: 1,
+                powerUps: {}
             });
-            projectiles = []; enemies = []; xpGems = [];
-            gameTime = 0; score = 0; enemySpawnTimer = 0;
-            enemySpawnInterval = 120; difficultyMultiplier = 1;
-            updateUI();
+            player.x = world.width / 2;
+            player.y = world.height / 2;
+            projectiles = []; enemies = []; xpGems = []; devAllies = []; powerUps = [];
+            score = 0;
+            aiUpgradeUsed = false;
+            aiBlast.active = false;
+            wave = 0;
+            difficultyMultiplier = 1;
+            startNextWave();
         }
 
-        // --- Player Logic ---
+        // --- Player and Ally Logic ---
         function updatePlayer() {
             let moved = false;
             if (keys['w'] || keys['ArrowUp']) { player.y -= player.speed; moved = true; }
@@ -202,24 +253,65 @@
             if (keys['a'] || keys['ArrowLeft']) { player.x -= player.speed; moved = true; }
             if (keys['d'] || keys['ArrowRight']) { player.x += player.speed; moved = true; }
             player.isMoving = moved;
+            if (player.isMoving) player.animationFrame++;
+            if (player.attackAnimTimer > 0) player.attackAnimTimer--;
 
-            if (player.isMoving) {
-                player.animationFrame++;
+            player.x = Math.max(0, Math.min(world.width - player.width, player.x));
+            player.y = Math.max(0, Math.min(world.height - player.height, player.y));
+            
+            const mouseWorldX = mouse.x + camera.x;
+            const mouseWorldY = mouse.y + camera.y;
+            player.angle = getAngle(player.x + player.width / 2, player.y + player.height / 2, mouseWorldX, mouseWorldY);
+
+            // Handle power-up timers
+            for (const key in player.powerUps) {
+                player.powerUps[key].timer--;
+                if (player.powerUps[key].timer <= 0) {
+                    delete player.powerUps[key];
+                }
             }
-
-            player.x = Math.max(0, Math.min(canvas.width - player.width, player.x));
-            player.y = Math.max(0, Math.min(canvas.height - player.height, player.y));
-            player.angle = getAngle(player.x + player.width / 2, player.y + player.height / 2, mouse.x, mouse.y);
 
             if (player.fireCooldown > 0) {
                 player.fireCooldown--;
             } else {
-                projectiles.push({
-                    x: player.x + player.width / 2, y: player.y + player.height / 2,
-                    size: player.projectileSize, speed: player.projectileSpeed,
-                    angle: player.angle, damage: player.damage
-                });
-                player.fireCooldown = player.fireRate;
+                // Check if any ANGRY enemy is in view before firing
+                let angryEnemyInView = false;
+                for (const enemy of enemies) {
+                    if (enemy.state === 'angry' &&
+                        enemy.x + enemy.width > camera.x && enemy.x < camera.x + canvas.width &&
+                        enemy.y + enemy.height > camera.y && enemy.y < camera.y + canvas.height) {
+                        angryEnemyInView = true;
+                        break;
+                    }
+                }
+
+                if(angryEnemyInView) {
+                    player.attackAnimTimer = 10; // Trigger attack animation
+                    const currentFireRate = player.powerUps.rapidFire ? player.fireRate * 0.25 : player.fireRate;
+                    const currentDamage = player.powerUps.damageBoost ? player.damage * 2 : player.damage;
+                    const projectileType = player.powerUps.damageBoost ? 'powerIdea' : 'idea';
+                    
+                    projectiles.push({
+                        x: player.x + player.width / 2, y: player.y + player.height / 2,
+                        size: player.projectileSize, speed: player.projectileSpeed,
+                        angle: player.angle, damage: currentDamage, type: projectileType
+                    });
+
+                    if (player.powerUps.splitShot) {
+                         projectiles.push({
+                            x: player.x + player.width / 2, y: player.y + player.height / 2,
+                            size: player.projectileSize, speed: player.projectileSpeed,
+                            angle: player.angle - 0.2, damage: currentDamage, type: projectileType
+                        });
+                         projectiles.push({
+                            x: player.x + player.width / 2, y: player.y + player.height / 2,
+                            size: player.projectileSize, speed: player.projectileSpeed,
+                            angle: player.angle + 0.2, damage: currentDamage, type: projectileType
+                        });
+                    }
+
+                    player.fireCooldown = currentFireRate;
+                }
             }
             
             if (player.isInvincible) {
@@ -228,18 +320,118 @@
             }
         }
 
+        function spawnDev() {
+            const devIndex = devAllies.length;
+            const newDev = {
+                x: player.x, y: player.y, width: 40, height: 50,
+                fireRate: 10, fireCooldown: 0,
+                damage: 8, projectileSpeed: 15,
+                animationFrame: 0,
+                followOffsetX: (devIndex % 2 === 0 ? -1 : 1) * (Math.floor(devIndex / 2) + 1) * 60,
+                followOffsetY: 0
+            };
+            devAllies.push(newDev);
+        }
+
+        function updateDevs() {
+            devAllies.forEach(dev => {
+                const targetX = player.x + dev.followOffsetX;
+                const targetY = player.y + dev.followOffsetY;
+                dev.x += (targetX - dev.x) * 0.1;
+                dev.y += (targetY - dev.y) * 0.1;
+                dev.animationFrame++;
+
+                if (dev.fireCooldown > 0) {
+                    dev.fireCooldown--;
+                } else if (enemies.length > 0) {
+                    let nearestEnemy = null;
+                    let nearestDist = Infinity;
+                    enemies.forEach(enemy => {
+                        if (enemy.state === 'angry' && 
+                            enemy.x + enemy.width > camera.x && enemy.x < camera.x + canvas.width &&
+                            enemy.y + enemy.height > camera.y && enemy.y < camera.y + canvas.height) {
+                            const dist = Math.hypot(dev.x - enemy.x, dev.y - enemy.y);
+                            if (dist < nearestDist) {
+                                nearestDist = dist;
+                                nearestEnemy = enemy;
+                            }
+                        }
+                    });
+
+                    if (nearestEnemy) {
+                        const angle = getAngle(dev.x, dev.y, nearestEnemy.x, nearestEnemy.y);
+                        projectiles.push({
+                            x: dev.x + dev.width / 2, y: dev.y + dev.height / 2,
+                            size: 15, speed: dev.projectileSpeed,
+                            angle: angle, damage: dev.damage, type: 'code'
+                        });
+                        dev.fireCooldown = dev.fireRate;
+                    }
+                }
+            });
+        }
+
+        function activateAIBlast() {
+            aiBlast.active = true;
+            aiBlast.radius = 0;
+            aiBlast.timer = aiBlast.duration;
+            aiBlast.maxRadius = Math.hypot(canvas.width, canvas.height);
+            aiUpgradeUsed = true;
+
+            const enemiesToKeep = Math.ceil(enemies.length * 0.1);
+            while (enemies.length > enemiesToKeep) {
+                const randomIndex = Math.floor(Math.random() * enemies.length);
+                enemies.splice(randomIndex, 1);
+            }
+        }
+
+        function updateAIBlast() {
+            if (!aiBlast.active) return;
+            aiBlast.timer--;
+            if (aiBlast.timer <= 0) {
+                aiBlast.active = false;
+                return;
+            }
+            aiBlast.radius = aiBlast.maxRadius * (1 - (aiBlast.timer / aiBlast.duration));
+        }
+        
+        function updateCamera() {
+            camera.x = player.x - canvas.width / 2;
+            camera.y = player.y - canvas.height / 2;
+            
+            camera.x = Math.max(0, Math.min(world.width - canvas.width, camera.x));
+            camera.y = Math.max(0, Math.min(world.height - canvas.height, camera.y));
+        }
+
         function drawPlayer() {
             ctx.save();
-            const yOffset = player.isMoving ? Math.sin(player.animationFrame * 0.2) * 2 : 0;
-            ctx.translate(player.x + player.width / 2, player.y + player.height / 2 + yOffset);
+            const yBob = player.isMoving ? Math.sin(player.animationFrame * 0.2) * 2 : 0;
+            ctx.translate(player.x + player.width / 2, player.y + player.height / 2 + yBob);
             
             if (player.isInvincible && Math.floor(player.invincibilityTimer / 5) % 2 === 0) {
                 ctx.globalAlpha = 0.5;
             }
 
-            ctx.fillStyle = '#60a5fa'; // Blue shirt
+            const legSwing = player.isMoving ? Math.cos(player.animationFrame * 0.3) * 5 : 0;
+            let armSwingLeft, armSwingRight;
+
+            if (player.attackAnimTimer > 0) {
+                armSwingRight = -15; // Right arm forward
+                armSwingLeft = 5;   // Left arm back
+            } else {
+                const swing = player.isMoving ? Math.sin(player.animationFrame * 0.3) * 5 : 0;
+                armSwingRight = swing;
+                armSwingLeft = -swing;
+            }
+
+            ctx.fillStyle = '#4b5563';
+            ctx.fillRect(-player.width / 4 - 4, player.height / 2 - 8, 8, 15 + legSwing);
+            ctx.fillRect(player.width / 4 - 4, player.height / 2 - 8, 8, 15 - legSwing);
+            ctx.fillStyle = '#60a5fa';
+            ctx.fillRect(-player.width / 2 - 6, -player.height / 2 + 5 + armSwingLeft, 6, 20);
+            ctx.fillRect(player.width / 2, -player.height / 2 + 5 + armSwingRight, 6, 20);
             ctx.fillRect(-player.width / 2, -player.height / 2, player.width, player.height);
-            ctx.fillStyle = '#f3d9b1'; // Skin tone
+            ctx.fillStyle = '#f3d9b1';
             ctx.beginPath();
             ctx.arc(0, -player.height/2, player.width/2.5, 0, Math.PI * 2);
             ctx.fill();
@@ -250,7 +442,42 @@
             ctx.stroke();
             ctx.fillStyle = '#555';
             ctx.fillRect(-player.width/2 - 2, -player.height/2 - 5, 10, 10);
-            
+            ctx.restore();
+        }
+
+        function drawDevs() {
+            devAllies.forEach(dev => {
+                ctx.save();
+                const yBob = Math.sin(dev.animationFrame * 0.2) * 2;
+                ctx.translate(dev.x + dev.width / 2, dev.y + dev.height / 2 + yBob);
+                
+                const armSwing = Math.sin(dev.animationFrame * 0.3) * 5;
+                const legSwing = Math.cos(dev.animationFrame * 0.3) * 5;
+
+                ctx.fillStyle = '#4b5563';
+                ctx.fillRect(-dev.width / 4 - 4, dev.height / 2 - 8, 8, 15 + legSwing);
+                ctx.fillRect(dev.width / 4 - 4, dev.height / 2 - 8, 8, 15 - legSwing);
+                ctx.fillStyle = '#1f2937';
+                ctx.fillRect(-dev.width / 2 - 6, -dev.height / 2 + 5 - armSwing, 6, 20);
+                ctx.fillRect(dev.width / 2, -dev.height / 2 + 5 + armSwing, 6, 20);
+                ctx.fillRect(-dev.width / 2, -dev.height / 2, dev.width, dev.height);
+                ctx.fillStyle = '#f3d9b1';
+                ctx.beginPath();
+                ctx.arc(0, -dev.height/2, dev.width/2.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            });
+        }
+        
+        function drawAIBlast() {
+            if (!aiBlast.active) return;
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(player.x + player.width / 2, player.y + player.height / 2, aiBlast.radius, 0, Math.PI * 2);
+            const alpha = aiBlast.timer / aiBlast.duration;
+            ctx.strokeStyle = `rgba(0, 255, 255, ${alpha})`;
+            ctx.lineWidth = 10;
+            ctx.stroke();
             ctx.restore();
         }
 
@@ -260,7 +487,7 @@
                 const p = projectiles[i];
                 p.x += Math.cos(p.angle) * p.speed;
                 p.y += Math.sin(p.angle) * p.speed;
-                if (p.x < 0 || p.x > canvas.width || p.y < 0 || p.y > canvas.height) {
+                if (p.x < camera.x || p.x > camera.x + canvas.width || p.y < camera.y || p.y > camera.y + canvas.height) {
                     projectiles.splice(i, 1);
                 }
             }
@@ -271,37 +498,82 @@
                 ctx.save();
                 ctx.translate(p.x, p.y);
                 ctx.rotate(p.angle);
-                ctx.shadowColor = '#4ade80';
-                ctx.shadowBlur = 15;
-                ctx.font = `${p.size}px "Press Start 2P"`;
-                ctx.fillStyle = '#22c55e';
-                ctx.textBaseline = 'middle';
-                ctx.textAlign = 'center';
-                ctx.fillText('✔', 0, 0);
+                
+                if (p.type === 'idea' || p.type === 'powerIdea') {
+                    const color = p.type === 'powerIdea' ? '#ef4444' : '#facc15';
+                    ctx.shadowColor = color;
+                    ctx.shadowBlur = 15;
+                    ctx.fillStyle = '#9ca3af';
+                    ctx.fillRect(-p.size/4, p.size/4, p.size/2, p.size/3);
+                    ctx.fillStyle = color;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, p.size/2.5, 0, Math.PI * 2);
+                    ctx.fill();
+                } else { // code
+                    ctx.shadowColor = '#f97316';
+                    ctx.shadowBlur = 15;
+                    ctx.font = `${p.size * 0.8}px "Press Start 2P"`;
+                    ctx.fillStyle = '#f97316';
+                    ctx.textBaseline = 'middle';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('101', 0, 0);
+                }
                 ctx.restore();
             });
         }
 
         // --- Enemy Logic ---
         function spawnEnemy() {
-            const pos = getRandomPositionOutsideCanvas();
             const type = Math.random() < 0.3 ? 'urgent' : 'standard';
-            const enemyData = {
-                x: pos.x, y: pos.y,
-                animationFrame: Math.floor(Math.random() * 100),
-            };
             
+            let deskTarget;
+            const availableDesks = backgroundScenery.filter(item => item.type === 'desk' && !item.occupied);
+            if (availableDesks.length === 0) {
+                return; // No desks left, can't spawn.
+            }
+
+            if (wave === 1) {
+                // Find nearest available desk to player for wave 1
+                let nearest = null;
+                let nearestDist = Infinity;
+                availableDesks.forEach(desk => {
+                    const dist = Math.hypot(player.x - desk.x, player.y - desk.y);
+                    if (dist < nearestDist) {
+                        nearestDist = dist;
+                        nearest = desk;
+                    }
+                });
+                deskTarget = nearest;
+            } else {
+                // Pick a random available desk for other waves
+                deskTarget = availableDesks[Math.floor(Math.random() * availableDesks.length)];
+            }
+            
+            if (!deskTarget) return; // Failsafe
+
+            deskTarget.occupied = true;
+
+            const enemyData = {
+                x: deskTarget.x, y: deskTarget.y,
+                animationFrame: Math.floor(Math.random() * 100),
+                state: 'working', // Start working immediately
+                stateTimer: (2 + Math.random() * 3) * 60, // 2-5 seconds
+                deskTarget: deskTarget,
+                printerTarget: null,
+                frustrationTimer: 0,
+            };
+
             if (type === 'urgent') {
                 Object.assign(enemyData, {
                     width: 40, height: 50, type: 'urgent',
-                    speed: 1.5 + Math.random() * difficultyMultiplier,
+                    speed: 1.5 + difficultyMultiplier,
                     hp: 30 * difficultyMultiplier, maxHp: 30 * difficultyMultiplier,
                     damage: 15, xpValue: 3,
                 });
             } else {
                 Object.assign(enemyData, {
                     width: 40, height: 50, type: 'standard',
-                    speed: 2.5 + Math.random() * difficultyMultiplier,
+                    speed: 2.5 + difficultyMultiplier,
                     hp: 15 * difficultyMultiplier, maxHp: 15 * difficultyMultiplier,
                     damage: 5, xpValue: 1,
                 });
@@ -310,22 +582,49 @@
         }
 
         function updateEnemies() {
-            enemySpawnTimer--;
-            if (enemySpawnTimer <= 0) {
-                const waveSize = 1 + Math.floor(gameTime / 600);
-                for(let i = 0; i < waveSize; i++) spawnEnemy();
-                enemySpawnTimer = enemySpawnInterval;
-                if (enemySpawnInterval > 30) enemySpawnInterval *= 0.98;
-            }
-
             for (let i = enemies.length - 1; i >= 0; i--) {
                 const e = enemies[i];
                 e.animationFrame++;
-                const angle = getAngle(e.x, e.y, player.x + player.width/2, player.y + player.height/2);
-                e.x += Math.cos(angle) * e.speed;
-                e.y += Math.sin(angle) * e.speed;
 
-                if (!player.isInvincible && checkCollision(player, e)) {
+                switch(e.state) {
+                    case 'working':
+                        e.stateTimer--;
+                        if (e.stateTimer <= 0) {
+                            e.state = 'walkingToPrinter';
+                            e.printerTarget = findNearestObject(e.x, e.y, 'mfd');
+                            if (e.deskTarget) e.deskTarget.occupied = false;
+                        }
+                        break;
+                    case 'walkingToPrinter':
+                        if (!e.printerTarget) { // No printers, just get angry
+                            e.state = 'angry';
+                            e.frustrationTimer = 60;
+                            break;
+                        }
+                        const angleToPrinter = getAngle(e.x, e.y, e.printerTarget.x, e.printerTarget.y);
+                        e.x += Math.cos(angleToPrinter) * (e.speed / 2);
+                        e.y += Math.sin(angleToPrinter) * (e.speed / 2);
+                        if (Math.hypot(e.x - e.printerTarget.x, e.y - e.printerTarget.y) < 10) {
+                            e.state = 'usingPrinter';
+                            e.stateTimer = 1.5 * 60; // 1.5 seconds
+                        }
+                        break;
+                    case 'usingPrinter':
+                        e.stateTimer--;
+                        if (e.stateTimer <= 0) {
+                            e.state = 'angry';
+                            e.frustrationTimer = 60; // Show bubble for 1 second
+                        }
+                        break;
+                    case 'angry':
+                        const angleToPlayer = getAngle(e.x, e.y, player.x + player.width/2, player.y + player.height/2);
+                        e.x += Math.cos(angleToPlayer) * e.speed;
+                        e.y += Math.sin(angleToPlayer) * e.speed;
+                        if (e.frustrationTimer > 0) e.frustrationTimer--;
+                        break;
+                }
+
+                if (!player.isInvincible && e.state === 'angry' && checkCollision(player, e)) {
                     player.hp -= e.damage;
                     player.isInvincible = true;
                     player.invincibilityTimer = player.invincibilityDuration;
@@ -334,11 +633,14 @@
 
                 for (let j = projectiles.length - 1; j >= 0; j--) {
                     const p = projectiles[j];
+                    if (e.state !== 'angry') continue; // Can only damage angry enemies
                     const pRect = { x: p.x - p.size/2, y: p.y - p.size/2, width: p.size, height: p.size };
                     if (checkCollision(pRect, e)) {
                         e.hp -= p.damage;
                         projectiles.splice(j, 1);
                         if (e.hp <= 0) {
+                            if (e.deskTarget) e.deskTarget.occupied = false;
+                            if (Math.random() < 0.1) spawnPowerUp(e.x, e.y); // 10% drop chance
                             xpGems.push({ x: e.x + e.width / 2, y: e.y + e.height / 2, value: e.xpValue });
                             enemies.splice(i, 1);
                             score++;
@@ -347,41 +649,89 @@
                     }
                 }
             }
+            if (enemies.length === 0 && gameState === 'playing') {
+                setGameState('waveClear');
+                waveMessage.text = `WAVE ${wave} CLEARED!`;
+                waveMessage.timer = 3 * 60; // 3 seconds
+                waveMessage.color = '#4ade80';
+            }
         }
 
         function drawEnemies() {
             enemies.forEach(e => {
                 ctx.save();
-                const yOffset = Math.sin(e.animationFrame * 0.1) * 3;
-                ctx.translate(e.x + e.width / 2, e.y + e.height / 2 + yOffset);
-
-                // Body and Head (same as player but different color)
-                ctx.fillStyle = '#a1a1aa'; // Grey shirt
+                const isStill = ['working', 'usingPrinter'].includes(e.state);
+                const yBob = !isStill ? Math.sin(e.animationFrame * 0.1) * 3 : 0;
+                ctx.translate(e.x + e.width / 2, e.y + e.height / 2 + yBob);
+                const legSwing = !isStill ? Math.cos(e.animationFrame * 0.2) * 5 : 0;
+                
+                ctx.fillStyle = '#4b5563';
+                ctx.fillRect(-e.width / 4 - 4, e.height / 2 - 8, 8, 15 + legSwing);
+                ctx.fillRect(e.width / 4 - 4, e.height / 2 - 8, 8, 15 - legSwing);
+                
+                const shirtColor = e.state === 'angry' ? '#a855f7' : '#a1a1aa';
+                
+                if (e.state === 'angry') {
+                    const armSwing = Math.sin(e.animationFrame * 0.4) * 10;
+                    ctx.fillStyle = shirtColor;
+                    ctx.fillRect(-e.width / 2 - 6, -e.height / 2 + 5 + armSwing, 6, 20); // Left arm
+                    ctx.fillRect(e.width / 2, -e.height / 2 + 5 - armSwing, 6, 20); // Right arm
+                } else {
+                    const paperColor = e.type === 'urgent' ? '#ef4444' : 'white';
+                    ctx.fillStyle = paperColor;
+                    ctx.fillRect(-e.width/3, -e.height/4, e.width * 0.6, e.height * 0.7);
+                    ctx.strokeStyle = 'black';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(-e.width/3, -e.height/4, e.width * 0.6, e.height * 0.7);
+                    if (e.type === 'urgent') {
+                        ctx.font = `${e.height * 0.5}px "Press Start 2P"`;
+                        ctx.fillStyle = 'white';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText('!', 0, 0);
+                    }
+                }
+                
+                ctx.fillStyle = shirtColor; // Purple for angry, grey for passive
                 ctx.fillRect(-e.width / 2, -e.height / 2, e.width, e.height);
-                ctx.fillStyle = '#f3d9b1'; // Skin tone
+                
+                ctx.fillStyle = '#f3d9b1';
                 ctx.beginPath();
                 ctx.arc(0, -e.height/2, e.width/2.5, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Paper
-                const paperColor = e.type === 'urgent' ? '#ef4444' : 'white';
-                ctx.fillStyle = paperColor;
-                ctx.fillRect(-e.width/3, -e.height/4, e.width * 0.6, e.height * 0.7);
-                ctx.strokeStyle = 'black';
-                ctx.lineWidth = 2;
-                ctx.strokeRect(-e.width/3, -e.height/4, e.width * 0.6, e.height * 0.7);
-
-                if (e.type === 'urgent') {
-                    ctx.font = `${e.height * 0.5}px "Press Start 2P"`;
+                if (e.state === 'working') {
                     ctx.fillStyle = 'white';
+                    ctx.strokeStyle = 'black';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.roundRect(-20, -e.height, 40, 30, 10);
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.fillStyle = 'black';
+                    ctx.font = `20px "Press Start 2P"`;
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
-                    ctx.fillText('!', 0, 0);
+                    ctx.fillText('...', 0, -e.height + 15);
+                }
+
+                if (e.frustrationTimer > 0) {
+                    ctx.fillStyle = 'white';
+                    ctx.strokeStyle = 'black';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.roundRect(-20, -e.height, 40, 30, 10);
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.fillStyle = 'red';
+                    ctx.font = `20px "Press Start 2P"`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('!!!', 0, -e.height + 15);
                 }
 
                 ctx.restore();
                 
-                // Health bar
                 if (e.hp < e.maxHp) {
                     ctx.fillStyle = '#dc2626';
                     ctx.fillRect(e.x, e.y - 10, e.width, 5);
@@ -434,7 +784,17 @@
 
         function presentUpgradeOptions() {
             ui.upgradeOptions.innerHTML = '';
-            const availableUpgrades = [...upgrades];
+            let availableUpgrades = [...upgrades];
+            
+            if (aiUpgradeUsed) {
+                availableUpgrades = availableUpgrades.filter(u => u.id !== 'useAI');
+            }
+
+            const regularUpgrades = availableUpgrades.filter(u => u.type !== 'special');
+            if (regularUpgrades.length < 3 && regularUpgrades.length > 0) {
+                 availableUpgrades = availableUpgrades.filter(u => u.type !== 'special' || Math.random() < 0.25);
+            }
+
             for (let i = 0; i < 3; i++) {
                 if (availableUpgrades.length === 0) break;
                 const randomIndex = Math.floor(Math.random() * availableUpgrades.length);
@@ -451,11 +811,8 @@
         function updateUI() {
             ui.hp.textContent = `${player.hp}/${player.maxHp}`;
             ui.level.textContent = player.level;
+            ui.wave.textContent = `WAVE: ${wave}`;
             ui.score.textContent = `TICKETS: ${score}`;
-            const minutes = Math.floor(gameTime / 3600).toString().padStart(2, '0');
-            const seconds = Math.floor((gameTime % 3600) / 60).toString().padStart(2, '0');
-            ui.timer.textContent = `TIME: ${minutes}:${seconds}`;
-            ui.xpBar.style.width = `${(player.xp / player.xpToNextLevel) * 100}%`;
         }
         
         function setGameState(newState) {
@@ -466,21 +823,27 @@
             ui.levelUpScreen.classList.toggle('hidden', newState !== 'levelUp');
             if (newState === 'gameOver') {
                 ui.finalScore.textContent = score;
-                ui.finalTime.textContent = ui.timer.textContent.replace('TIME: ', '');
+                ui.finalWave.textContent = wave;
             }
         }
 
         // --- Drawing the Background ---
         function generateBackground() {
             backgroundScenery = [];
-            const deskWidth = 100, deskHeight = 60, padding = 50;
-            for(let y = padding; y < canvas.height - padding - deskHeight; y += deskHeight + padding * 1.5) {
-                for(let x = padding; x < canvas.width - padding - deskWidth; x += deskWidth + padding) {
-                    backgroundScenery.push({ type: 'desk', x, y, width: deskWidth, height: deskHeight });
-                    if (Math.random() < 0.3) { 
+            const deskWidth = 100, deskHeight = 60, padding = 150; // Increased padding
+            for(let y = padding; y < world.height - padding - deskHeight; y += deskHeight + padding * 1.5) {
+                for(let x = padding; x < world.width - padding - deskWidth; x += deskWidth + padding) {
+                    backgroundScenery.push({ type: 'desk', x, y, width: deskWidth, height: deskHeight, occupied: false });
+                    if (Math.random() < 0.15) { // MFDs are rarer
+                        const mfdX = x + deskWidth + (padding / 2) - 20;
+                        const mfdY = y;
+                        if (mfdX < world.width - padding) {
+                            backgroundScenery.push({type: 'mfd', x: mfdX, y: mfdY });
+                        }
+                    } else if (Math.random() < 0.3) { 
                         const plantX = x + deskWidth + (padding / 2) - 10;
                         const plantY = y + deskHeight / 2;
-                        if (plantX < canvas.width - padding) {
+                        if (plantX < world.width - padding) {
                              backgroundScenery.push({ type: 'plant', x: plantX, y: plantY });
                         }
                     }
@@ -508,28 +871,161 @@
                     ctx.arc(item.x, item.y - 10, 10, 0, Math.PI * 2);
                     ctx.arc(item.x + 20, item.y - 10, 10, 0, Math.PI * 2);
                     ctx.fill();
+                } else if (item.type === 'mfd') {
+                    ctx.fillStyle = '#d1d5db'; // Light grey body
+                    ctx.fillRect(item.x, item.y, 40, 80);
+                    ctx.fillStyle = '#4b5563'; // Darker top/scanner
+                    ctx.fillRect(item.x - 5, item.y, 50, 20);
+                    ctx.fillStyle = 'white'; // Paper tray
+                    ctx.fillRect(item.x + 5, item.y + 50, 30, 5);
                 }
             });
+        }
+        
+        // --- Power-up Logic ---
+        function spawnPowerUp(x, y) {
+            const types = ['rapidFire', 'splitShot', 'damageBoost'];
+            const type = types[Math.floor(Math.random() * types.length)];
+            powerUps.push({ x, y, type, size: 20 });
+        }
+
+        function updatePowerUps() {
+            for (let i = powerUps.length - 1; i >= 0; i--) {
+                const p = powerUps[i];
+                const pRect = { x: p.x - p.size/2, y: p.y - p.size/2, width: p.size, height: p.size };
+                if (checkCollision(player, pRect)) {
+                    player.powerUps[p.type] = { timer: 60 * 60 }; // 60 seconds
+                    powerUps.splice(i, 1);
+                }
+            }
+        }
+
+        function drawPowerUps() {
+            powerUps.forEach(p => {
+                ctx.save();
+                ctx.translate(p.x, p.y);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                ctx.beginPath();
+                ctx.arc(0, 0, p.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.font = `${p.size}px "Press Start 2P"`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                if (p.type === 'rapidFire') {
+                    ctx.fillStyle = 'blue';
+                    ctx.fillText('>', 0, 0); // Simple clock hand
+                } else if (p.type === 'splitShot') {
+                    ctx.fillStyle = 'green';
+                    ctx.fillText('…', 0, 0);
+                } else if (p.type === 'damageBoost') {
+                    ctx.fillStyle = 'red';
+                    ctx.fillText('+', 0, 0);
+                }
+                ctx.restore();
+            });
+        }
+
+        // --- Wave Logic ---
+        function startNextWave() {
+            wave++;
+            difficultyMultiplier = 1 + (wave * 0.1);
+            const numEnemies = 5 + wave * 2;
+            for (let i = 0; i < numEnemies; i++) {
+                spawnEnemy();
+            }
+            gameState = 'playing';
+        }
+
+        function updateWaveState() {
+            if (waveMessage.timer > 0) {
+                waveMessage.timer--;
+            }
+
+            if (gameState === 'waveClear' && waveMessage.timer <= 0) {
+                gameState = 'waveCountdown';
+                waveMessage.text = `NEXT WAVE IN 5...`;
+                waveMessage.timer = 5 * 60; // 5 seconds
+                waveMessage.color = 'yellow';
+            }
+
+            if (gameState === 'waveCountdown') {
+                waveMessage.text = `NEXT WAVE IN ${Math.ceil(waveMessage.timer / 60)}...`;
+                if (waveMessage.timer <= 0) {
+                    startNextWave();
+                }
+            }
+        }
+
+        function drawWaveMessage() {
+            if (waveMessage.timer > 0) {
+                ctx.save();
+                ctx.fillStyle = waveMessage.color;
+                ctx.font = '32px "Press Start 2P"';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.shadowColor = 'black';
+                ctx.shadowBlur = 5;
+                ctx.fillText(waveMessage.text, canvas.width / 2, canvas.height / 8);
+                ctx.restore();
+            }
         }
 
         // --- Main Game Loop ---
         function gameLoop() {
-            if (gameState === 'playing') {
+            if (gameState === 'playing' || gameState === 'waveClear' || gameState === 'waveCountdown') {
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
-                drawBackground();
-                gameTime++;
-                difficultyMultiplier = 1 + (gameTime / 7200);
+                
                 updatePlayer();
+                updateDevs();
+                updateAIBlast();
                 updateProjectiles();
-                updateEnemies();
+                if (gameState === 'playing') updateEnemies();
                 updateXpGems();
+                updatePowerUps();
+                updateCamera();
                 updateUI();
+                updateWaveState();
+
+                ctx.save();
+                ctx.translate(-camera.x, -camera.y);
+
+                drawBackground();
                 drawXpGems();
+                drawPowerUps();
                 drawEnemies();
                 drawPlayer();
+                drawDevs();
                 drawProjectiles();
+                drawAIBlast();
+                
+                ctx.restore();
+
+                drawWaveMessage();
+                drawMinimap();
             }
             requestAnimationFrame(gameLoop);
+        }
+        
+        function drawMinimap() {
+            const minimap = ui.minimapCanvas;
+            const minimapCtx = minimap.getContext('2d');
+            const scaleX = minimap.width / world.width;
+            const scaleY = minimap.height / world.height;
+
+            minimapCtx.fillStyle = 'rgba(100, 100, 100, 0.5)';
+            minimapCtx.fillRect(0, 0, minimap.width, minimap.height);
+
+            minimapCtx.fillStyle = 'white';
+            minimapCtx.fillRect(player.x * scaleX - 2, player.y * scaleY - 2, 4, 4);
+
+            enemies.forEach(e => {
+                minimapCtx.fillStyle = e.state === 'angry' ? '#a855f7' : '#d1d5db';
+                minimapCtx.fillRect(e.x * scaleX - 1, e.y * scaleY - 1, 2, 2);
+            });
+            
+            minimapCtx.strokeStyle = 'white';
+            minimapCtx.lineWidth = 1;
+            minimapCtx.strokeRect(camera.x * scaleX, camera.y * scaleY, canvas.width * scaleX, canvas.height * scaleY);
         }
 
         // --- Event Listeners ---
@@ -541,12 +1037,13 @@
             mouse.x = e.clientX - rect.left;
             mouse.y = e.clientY - rect.top;
         });
-        ui.startButton.addEventListener('click', () => { init(); setGameState('playing'); });
-        ui.restartButton.addEventListener('click', () => { init(); setGameState('playing'); });
+        ui.startButton.addEventListener('click', () => { setGameState('playing'); init(); });
+        ui.restartButton.addEventListener('click', () => { setGameState('playing'); init(); });
 
         // --- Initial Call ---
         init();
-        requestAnimationFrame(gameLoop);
+        setGameState('start');
+        gameLoop();
     </script>
 </body>
 </html>
