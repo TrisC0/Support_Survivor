@@ -64,16 +64,16 @@
     </div>
 
     <!-- Minimap -->
-    <canvas id="minimapCanvas" class="absolute top-4 right-4 border-2 border-black bg-gray-500 bg-opacity-50 rounded-lg pointer-events-none"></canvas>
+    <canvas id="minimapCanvas" class="absolute top-20 right-4 border-2 border-black bg-gray-500 bg-opacity-50 rounded-lg pointer-events-none"></canvas>
 
     <!-- Start/Game Over/Level Up Screens -->
     <div id="modal" class="absolute inset-0 bg-black bg-opacity-70 flex items-center justify-center text-white text-center p-4">
         <div id="startScreen">
             <h1 class="text-6xl mb-4 text-yellow-300" style="text-shadow: 4px 4px #000;">SUPPORT SURVIVOR</h1>
-            <p class="text-xl mb-8">The ticket queue is overflowing. You are the last engineer on shift.</p>
-            <p class="mb-4">Use <span class="text-yellow-300">[WASD]</span> or <span class="text-yellow-300">[ARROW KEYS]</span> to move.</p>
-            <p class="mb-8">Aim with the <span class="text-yellow-300">MOUSE</span>. You fire solutions automatically.</p>
-            <button id="startButton" class="bg-green-500 hover:bg-green-400 text-black font-bold py-4 px-8 rounded-lg text-2xl border-b-4 border-green-700 hover:border-green-500">START SHIFT</button>
+            <p class="text-xl mb-8">Choose your engineer for the shift.</p>
+            <div id="characterSelection" class="flex justify-center items-stretch gap-8 flex-wrap">
+                <!-- Character cards will be inserted here by JS -->
+            </div>
         </div>
 
         <div id="gameOverScreen" class="hidden">
@@ -104,7 +104,7 @@
             startScreen: document.getElementById('startScreen'),
             gameOverScreen: document.getElementById('gameOverScreen'),
             levelUpScreen: document.getElementById('levelUpScreen'),
-            startButton: document.getElementById('startButton'),
+            characterSelection: document.getElementById('characterSelection'),
             restartButton: document.getElementById('restartButton'),
             upgradeOptions: document.getElementById('upgradeOptions'),
             hp: document.getElementById('hp'),
@@ -126,6 +126,7 @@
         let xpGems = [];
         let powerUps = [];
         let aiRobots = [];
+        let bees = [];
         let score = 0;
         let backgroundScenery = [];
         let aiUpgradeUsed = false;
@@ -133,6 +134,9 @@
         let wave = 0;
         let waveMessage = { text: '', timer: 0, color: 'white' };
         let difficultyMultiplier = 1;
+        let selectedCharacterId = null;
+        let swarmTarget = null;
+        let swarmTargetTimer = 0;
 
         const world = {
             width: 0,
@@ -161,8 +165,89 @@
             animationFrame: 0, isMoving: false,
             powerUps: {},
             attackAnimTimer: 0,
+            powerUpDurationMultiplier: 1,
+            characterId: null,
+            beeHive: null,
+            melee: null,
         };
         
+        // --- Character Definitions ---
+        const characters = [
+            {
+                id: 'james',
+                name: 'James Elliot',
+                description: 'Commands attack bees from a hive.',
+                shirtColor: '#f5f5dc', // Beige for beekeeper suit
+                profilePicSVG: `
+                    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="10" y="70" width="80" height="30" fill="#f5f5dc" />
+                        <circle cx="50" cy="45" r="30" fill="#f3d9b1" />
+                        <rect x="20" y="55" width="60" height="20" fill="rgba(0,0,0,0.3)" />
+                        <path d="M 10 30 C 10 10, 90 10, 90 30" fill="#d2b48c" />
+                        <rect x="8" y="30" width="84" height="2" fill="#a0522d" />
+                        <circle cx="40" cy="45" r="4" fill="black" />
+                        <circle cx="60" cy="45" r="4" fill="black" />
+                    </svg>`,
+                apply: (p) => {
+                    p.characterId = 'james';
+                    p.width = 40; p.height = 50;
+                    p.beeHive = {
+                        spawnRate: 60, // A bee every second
+                        spawnCooldown: 0,
+                        damage: 8,
+                        speed: 10
+                    };
+                }
+            },
+            {
+                id: 'david',
+                name: 'David Dunn',
+                description: 'A fast runner, 25% faster movement speed.',
+                shirtColor: '#22c55e', // Green
+                 profilePicSVG: `
+                    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="10" y="70" width="80" height="30" fill="#22c55e" />
+                        <circle cx="50" cy="45" r="30" fill="#f3d9b1" />
+                        <rect x="25" y="15" width="50" height="20" fill="#A0522D" />
+                        <circle cx="40" cy="45" r="4" fill="black" />
+                        <circle cx="60" cy="45" r="4" fill="black" />
+                    </svg>`,
+                apply: (p) => {
+                    p.characterId = 'david';
+                    p.width = 40; p.height = 50;
+                    p.speed *= 1.25; // Apply the speed boost
+                }
+            },
+            {
+                id: 'baninder',
+                name: 'Baninder Chandla',
+                description: 'Tae Kwon Do expert. Kicks nearby enemies.',
+                shirtColor: '#ef4444', // Red
+                profilePicSVG: `
+                    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="10" y="70" width="80" height="30" fill="#ef4444" />
+                        <path d="M 15 50 C 10 90, 90 90, 85 50" fill="black" />
+                        <circle cx="50" cy="45" r="30" fill="#f3d9b1" />
+                        <path d="M 20 20 Q 50 10 80 20 L 80 45 L 20 45 Z" fill="black" />
+                        <circle cx="40" cy="45" r="4" fill="black" />
+                        <circle cx="60" cy="45" r="4" fill="black" />
+                    </svg>`,
+                apply: (p) => {
+                    p.characterId = 'baninder';
+                    p.width = 36; p.height = 45;
+                    p.melee = {
+                        range: 120,
+                        damage: 35,
+                        knockback: 15,
+                        rate: 60, // A kick every second
+                        cooldown: 0,
+                        active: false,
+                        timer: 0
+                    };
+                }
+            }
+        ];
+
         // --- AI Blast Object ---
         const aiBlast = {
             active: false,
@@ -181,6 +266,8 @@
             { id: 'projectileSpeedUp', name: 'Quick KB Search', description: 'Solutions travel 15% faster', apply: (p) => { p.projectileSpeed *= 1.15; } },
             { id: 'projectileSizeUp', name: 'Comprehensive KB Article', description: 'Solutions are 20% bigger', apply: (p) => { p.projectileSize *= 1.2; } },
             { id: 'luckUp', name: 'Good Karma', description: '+1 Luck (better ticket drops)', apply: (p) => { p.luck += 1; } },
+            { id: 'caffeineBuzz', name: 'Caffeine Buzz', description: '+5% permanent move speed', apply: (p) => { p.speed *= 1.05; } },
+            { id: 'bigGulp', name: 'The Big Gulp', description: 'Coffee power-ups last longer', apply: (p) => { p.powerUpDurationMultiplier = (p.powerUpDurationMultiplier || 1) * 1.5; } },
             { id: 'escalateToDev', name: 'Escalate to Dev', description: 'A new Dev joins your team!', apply: () => { spawnDev(); } },
             { id: 'useAI', name: 'Use AI', description: 'Unleash an AI blast, clearing 90% of on-screen issues!', type: 'special', apply: () => { activateAIBlast(); } }
         ];
@@ -243,21 +330,72 @@
         }
         
         // --- Game Initialization ---
+        function setupCharacterSelection() {
+            const container = ui.characterSelection;
+            container.innerHTML = ''; // Clear previous
+            characters.forEach(char => {
+                const card = document.createElement('div');
+                card.className = 'upgrade-card bg-gray-800 p-6 rounded-lg border-4 border-yellow-400 w-72 flex flex-col text-center';
+                card.innerHTML = `
+                    <div class="w-24 h-24 mx-auto mb-4 bg-gray-900 rounded-full overflow-hidden border-2 border-yellow-400">
+                        ${char.profilePicSVG}
+                    </div>
+                    <h2 class="text-2xl mb-4 text-yellow-300">${char.name}</h2>
+                    <p class="text-lg flex-grow mb-6">${char.description}</p>
+                    <button class="bg-green-500 hover:bg-green-400 text-black font-bold py-3 px-6 rounded-lg text-xl border-b-4 border-green-700 hover:border-green-500">SELECT</button>
+                `;
+                card.querySelector('button').onclick = () => {
+                    startGame(char.id);
+                };
+                container.appendChild(card);
+            });
+        }
+
+        function startGame(characterId) {
+            selectedCharacterId = characterId;
+            setGameState('playing');
+            init();
+        }
+
         function init() {
             resizeCanvas();
+            // Reset player to base stats
             Object.assign(player, {
-                hp: 100, maxHp: 100, level: 1, xp: 0, xpToNextLevel: 10,
-                speed: 7.5, damage: 10, fireRate: 14, projectileSpeed: 12, projectileSize: 20, luck: 1,
-                powerUps: {}
+                x: 0, y: 0, width: 40, height: 50,
+                speed: 7.5,
+                hp: 100, maxHp: 100,
+                level: 1, xp: 0, xpToNextLevel: 10,
+                angle: 0,
+                fireRate: 14, fireCooldown: 0,
+                damage: 10,
+                projectileSpeed: 12, projectileSize: 20,
+                luck: 1, 
+                isInvincible: false, invincibilityTimer: 0, invincibilityDuration: 60,
+                animationFrame: 0, isMoving: false,
+                powerUps: {},
+                attackAnimTimer: 0,
+                powerUpDurationMultiplier: 1,
+                characterId: null, beeHive: null, melee: null,
             });
+            
+            // Apply character specific stats
+            if (selectedCharacterId) {
+                const selectedCharacter = characters.find(c => c.id === selectedCharacterId);
+                if (selectedCharacter) {
+                    selectedCharacter.apply(player);
+                }
+            }
+
             player.x = world.width / 2;
             player.y = world.height / 2;
-            projectiles = []; enemies = []; xpGems = []; devAllies = []; powerUps = []; aiRobots = [];
+            projectiles = []; enemies = []; xpGems = []; devAllies = []; powerUps = []; aiRobots = []; bees = [];
             score = 0;
             aiUpgradeUsed = false;
             aiBlast.active = false;
             wave = 0;
             difficultyMultiplier = 1;
+            swarmTarget = null;
+            swarmTargetTimer = 0;
             startNextWave();
         }
 
@@ -265,7 +403,9 @@
         function updatePlayer() {
             let moved = false;
             
-            const speedMultiplier = player.powerUps.coffee ? 1.5 : 1;
+            let speedMultiplier = 1;
+            if (player.powerUps.coffee) speedMultiplier = 1.5;
+            if (player.powerUps.espresso) speedMultiplier = 2.5; // Espresso is much faster
             const currentSpeed = player.speed * speedMultiplier;
 
             if (keys['w'] || keys['ArrowUp']) { player.y -= currentSpeed; moved = true; }
@@ -302,59 +442,98 @@
                             const dist = Math.hypot((player.x + player.width/2) - (e.x + e.width/2), (player.y + player.height/2) - (e.y + e.height/2));
                             if (dist < firewall.radius) {
                                 e.hp -= firewall.damage;
-                                // Visual effect for hit
                                 e.firewallHitTimer = 5;
                             }
                         }
                     });
-                    firewall.cooldown = 15; // Damage every 0.25 seconds
+                    firewall.cooldown = 15;
                 }
             }
 
-            if (player.fireCooldown > 0) {
-                player.fireCooldown--;
-            } else {
-                // Check if any ANGRY enemy is in view before firing
-                let angryEnemyInView = false;
-                for (const enemy of enemies) {
-                    if (enemy.state === 'angry' &&
-                        enemy.x + enemy.width > camera.x && enemy.x < camera.x + canvas.width &&
-                        enemy.y + enemy.height > camera.y && enemy.y < camera.y + canvas.height) {
-                        angryEnemyInView = true;
-                        break;
-                    }
-                }
-
-                if(angryEnemyInView) {
-                    player.attackAnimTimer = 10; // Trigger attack animation
-                    
-                    let currentFireRate = player.fireRate;
-                    if (player.powerUps.rapidFire) currentFireRate *= 0.25;
-                    if (player.powerUps.coffee) currentFireRate *= 0.5;
-
-                    const currentDamage = player.powerUps.damageBoost ? player.damage * 2 : player.damage;
-                    const projectileType = player.powerUps.damageBoost ? 'powerIdea' : 'idea';
-                    
-                    projectiles.push({
+            // Handle native abilities
+            if (player.beeHive) {
+                if (player.beeHive.spawnCooldown > 0) {
+                    player.beeHive.spawnCooldown--;
+                } else {
+                    bees.push({
                         x: player.x + player.width / 2, y: player.y + player.height / 2,
-                        size: player.projectileSize, speed: player.projectileSpeed,
-                        angle: player.angle, damage: currentDamage, type: projectileType
+                        size: 8, 
+                        orbitAngle: Math.random() * Math.PI * 2, // Start at a random point in the orbit
+                        orbitRadius: 40 + Math.random() * 20, // Vary the orbit radius
+                        speed: player.beeHive.speed, damage: player.beeHive.damage,
+                        turnSpeed: 0.1, life: 240, // live for 4 seconds
+                        state: 'orbiting', attackDelay: 60 // Orbit for 1s before attacking
+                    });
+                    player.beeHive.spawnCooldown = player.beeHive.spawnRate;
+                }
+            }
+            if (player.melee) {
+                if (player.melee.cooldown > 0) player.melee.cooldown--;
+                else {
+                    let kicked = false;
+                    const attackAngle = player.angle;
+                    const coneStart = attackAngle - (Math.PI / 4); // 90 degree cone
+                    const coneEnd = attackAngle + (Math.PI / 4);
+
+                    enemies.forEach(e => {
+                        if (e.state === 'angry') {
+                            const dist = Math.hypot((player.x + player.width/2) - (e.x + e.width/2), (player.y + player.height/2) - (e.y + e.height/2));
+                            if (dist < player.melee.range) {
+                                const angleToEnemy = getAngle(player.x + player.width/2, player.y + player.height/2, e.x + e.width/2, e.y + e.height/2);
+                                let normalizedAngle = angleToEnemy;
+                                let normalizedStart = coneStart;
+                                // Normalize angles to be comparable
+                                if (normalizedStart < -Math.PI) normalizedStart += Math.PI * 2;
+                                if (normalizedAngle < normalizedStart) normalizedAngle += Math.PI * 2;
+
+                                if (normalizedAngle > normalizedStart && normalizedAngle < normalizedStart + Math.PI / 2) {
+                                    e.hp -= player.melee.damage;
+                                    e.x += Math.cos(angleToEnemy) * player.melee.knockback;
+                                    e.y += Math.sin(angleToEnemy) * player.melee.knockback;
+                                    kicked = true;
+                                }
+                            }
+                        }
                     });
 
-                    if (player.powerUps.splitShot) {
-                         projectiles.push({
-                            x: player.x + player.width / 2, y: player.y + player.height / 2,
-                            size: player.projectileSize, speed: player.projectileSpeed,
-                            angle: player.angle - 0.2, damage: currentDamage, type: projectileType
-                        });
-                         projectiles.push({
-                            x: player.x + player.width / 2, y: player.y + player.height / 2,
-                            size: player.projectileSize, speed: player.projectileSpeed,
-                            angle: player.angle + 0.2, damage: currentDamage, type: projectileType
-                        });
+                    if (kicked) {
+                        player.melee.cooldown = player.melee.rate;
+                        player.melee.active = true;
+                        player.melee.timer = 10;
+                        player.attackAnimTimer = 15; // Trigger kick animation
+                    }
+                }
+                if(player.melee.timer > 0) player.melee.timer--; else player.melee.active = false;
+            }
+
+            // Handle Firing
+            if (player.characterId !== 'baninder') {
+                if (player.fireCooldown > 0) {
+                    player.fireCooldown--;
+                } else {
+                    let angryEnemyInView = false;
+                    for (const enemy of enemies) {
+                        if (enemy.state === 'angry' && enemy.x + enemy.width > camera.x && enemy.x < camera.x + canvas.width && enemy.y + enemy.height > camera.y && enemy.y < camera.y + canvas.height) {
+                            angryEnemyInView = true;
+                            break;
+                        }
                     }
 
-                    player.fireCooldown = currentFireRate;
+                    if(angryEnemyInView) {
+                        player.attackAnimTimer = 10;
+                        let currentFireRate = player.fireRate;
+                        if (player.powerUps.rapidFire) currentFireRate *= 0.25;
+                        if (player.powerUps.coffee) currentFireRate *= 0.5;
+                        if (player.powerUps.espresso) currentFireRate *= 0.25;
+                        const currentDamage = player.powerUps.damageBoost ? player.damage * 2 : player.damage;
+                        const projectileType = player.powerUps.damageBoost ? 'powerIdea' : 'idea';
+                        projectiles.push({ x: player.x + player.width / 2, y: player.y + player.height / 2, size: player.projectileSize, speed: player.projectileSpeed, angle: player.angle, damage: currentDamage, type: projectileType });
+                        if (player.powerUps.splitShot) {
+                            projectiles.push({ x: player.x + player.width / 2, y: player.y + player.height / 2, size: player.projectileSize, speed: player.projectileSpeed, angle: player.angle - 0.2, damage: currentDamage, type: projectileType });
+                            projectiles.push({ x: player.x + player.width / 2, y: player.y + player.height / 2, size: player.projectileSize, speed: player.projectileSpeed, angle: player.angle + 0.2, damage: currentDamage, type: projectileType });
+                        }
+                        player.fireCooldown = currentFireRate;
+                    }
                 }
             }
             
@@ -422,16 +601,11 @@
             aiBlast.maxRadius = Math.hypot(canvas.width, canvas.height);
             aiUpgradeUsed = true;
 
-            // Spawn AI Robots
             for (let i = 0; i < 8; i++) {
                 const angle = (i / 8) * Math.PI * 2;
                 aiRobots.push({
-                    x: player.x + player.width / 2,
-                    y: player.y + player.height / 2,
-                    angle: angle,
-                    speed: 20,
-                    size: 25,
-                    damage: 500, // Massive damage
+                    x: player.x + player.width / 2, y: player.y + player.height / 2,
+                    angle: angle, speed: 20, size: 25, damage: 500,
                 });
             }
 
@@ -457,20 +631,90 @@
                 const r = aiRobots[i];
                 r.x += Math.cos(r.angle) * r.speed;
                 r.y += Math.sin(r.angle) * r.speed;
-
-                // Check for collision with enemies
                 for (let j = enemies.length - 1; j >= 0; j--) {
                     const e = enemies[j];
                     const robotRect = { x: r.x - r.size / 2, y: r.y - r.size / 2, width: r.size, height: r.size };
                     if (e.state === 'angry' && checkCollision(robotRect, e)) {
                         e.hp -= r.damage;
-                        // No break, robot plows through
+                    }
+                }
+                if (r.x < camera.x - 50 || r.x > camera.x + canvas.width + 50 || r.y < camera.y - 50 || r.y > camera.y + canvas.height + 50) {
+                    aiRobots.splice(i, 1);
+                }
+            }
+        }
+        
+        function updateSwarm() {
+            if (swarmTargetTimer > 0) {
+                swarmTargetTimer--;
+            } else {
+                swarmTarget = null;
+                let nearestDist = Infinity;
+                enemies.forEach(e => {
+                    if (e.state === 'angry') {
+                        const dist = Math.hypot(player.x - e.x, player.y - e.y);
+                        if (dist < nearestDist) {
+                            nearestDist = dist;
+                            swarmTarget = e;
+                        }
+                    }
+                });
+                swarmTargetTimer = 90; // Retarget every 1.5 seconds
+            }
+            if (swarmTarget && swarmTarget.hp <= 0) {
+                swarmTarget = null;
+                swarmTargetTimer = 0; // Find new target immediately
+            }
+        }
+
+        function updateBees() {
+            for (let i = bees.length - 1; i >= 0; i--) {
+                const b = bees[i];
+                b.life--;
+
+                if (b.state === 'orbiting') {
+                    b.attackDelay--;
+                    // Simple circular orbit logic
+                    b.orbitAngle += 0.1; 
+                    const orbitTargetX = player.x + player.width/2 + Math.cos(b.orbitAngle) * b.orbitRadius;
+                    const orbitTargetY = player.y + player.height/2 + Math.sin(b.orbitAngle) * b.orbitRadius;
+                    
+                    // Move towards orbit position
+                    b.x += (orbitTargetX - b.x) * 0.2;
+                    b.y += (orbitTargetY - b.y) * 0.2;
+
+                    if (b.attackDelay <= 0 && swarmTarget) {
+                        b.state = 'attacking';
+                        // Set initial angle towards the target for a smoother transition
+                        b.angle = getAngle(b.x, b.y, swarmTarget.x + swarmTarget.width/2, swarmTarget.y + swarmTarget.height/2);
+                    }
+                } else if (b.state === 'attacking') {
+                    if (swarmTarget) {
+                        const targetAngle = getAngle(b.x, b.y, swarmTarget.x + swarmTarget.width/2, swarmTarget.y + swarmTarget.height/2);
+                        let angleDiff = targetAngle - b.angle;
+                        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                        b.angle += angleDiff * b.turnSpeed;
+                    }
+                     // Add random wobble to the final angle before moving
+                    const finalAngle = b.angle + (Math.random() - 0.5) * 0.5; // Wobble up to ~14 degrees
+                    b.x += Math.cos(finalAngle) * b.speed;
+                    b.y += Math.sin(finalAngle) * b.speed;
+                }
+
+                const beeRect = { x: b.x - b.size/2, y: b.y - b.size/2, width: b.size, height: b.size };
+                for (let j = enemies.length - 1; j >= 0; j--) {
+                    const e = enemies[j];
+                    if (e.state === 'angry' && checkCollision(beeRect, e)) {
+                        e.hp -= b.damage;
+                        e.beeHitTimer = 5; // Visual feedback for bee hit
+                        bees.splice(i, 1);
+                        break; 
                     }
                 }
 
-                // Remove if off-screen
-                if (r.x < camera.x - 50 || r.x > camera.x + canvas.width + 50 || r.y < camera.y - 50 || r.y > camera.y + canvas.height + 50) {
-                    aiRobots.splice(i, 1);
+                if (b.life <= 0) {
+                    bees.splice(i, 1);
                 }
             }
         }
@@ -478,7 +722,6 @@
         function updateCamera() {
             camera.x = player.x - canvas.width / 2;
             camera.y = player.y - canvas.height / 2;
-            
             camera.x = Math.max(0, Math.min(world.width - canvas.width, camera.x));
             camera.y = Math.max(0, Math.min(world.height - canvas.height, camera.y));
         }
@@ -492,36 +735,83 @@
                 ctx.globalAlpha = 0.5;
             }
 
-            const legSwing = player.isMoving ? Math.cos(player.animationFrame * 0.3) * 5 : 0;
+            // Hair for Baninder
+            if (player.characterId === 'baninder') {
+                ctx.fillStyle = 'black';
+                ctx.beginPath();
+                ctx.moveTo(-player.width / 2, -player.height / 2 + 5);
+                ctx.lineTo(player.width / 2, -player.height / 2 + 5);
+                ctx.lineTo(player.width / 2 + 5, player.height / 2);
+                ctx.lineTo(-player.width / 2 - 5, player.height / 2);
+                ctx.closePath();
+                ctx.fill();
+            }
+            
+            let legSwing = player.isMoving ? Math.cos(player.animationFrame * 0.3) * 5 : 0;
             let armSwingLeft, armSwingRight;
+            let kickingLeg = 0;
 
             if (player.attackAnimTimer > 0) {
-                armSwingRight = -15; // Right arm forward
-                armSwingLeft = 5;   // Left arm back
+                if (player.characterId === 'baninder') { // Kick animation
+                    const kickProgress = 1 - (player.attackAnimTimer / 15);
+                    kickingLeg = Math.sin(kickProgress * Math.PI) * 15;
+                    armSwingRight = 10;
+                    armSwingLeft = -10;
+                } else { // Firing animation
+                    armSwingRight = -15; 
+                    armSwingLeft = 5;
+                }
             } else {
                 const swing = player.isMoving ? Math.sin(player.animationFrame * 0.3) * 5 : 0;
                 armSwingRight = swing;
                 armSwingLeft = -swing;
             }
 
+            // Legs
             ctx.fillStyle = '#4b5563';
             ctx.fillRect(-player.width / 4 - 4, player.height / 2 - 8, 8, 15 + legSwing);
-            ctx.fillRect(player.width / 4 - 4, player.height / 2 - 8, 8, 15 - legSwing);
-            ctx.fillStyle = '#60a5fa';
+            ctx.save();
+            ctx.translate(player.width / 4 - 4, player.height / 2 - 8);
+            ctx.rotate(player.angle - Math.PI/2);
+            ctx.fillRect(0, kickingLeg, 8, 15 - legSwing);
+            ctx.restore();
+            
+            // Shirt/Body
+            const selectedChar = characters.find(c => c.id === player.characterId);
+            const shirtColor = selectedChar ? selectedChar.shirtColor : '#60a5fa';
+            ctx.fillStyle = shirtColor;
+
             ctx.fillRect(-player.width / 2 - 6, -player.height / 2 + 5 + armSwingLeft, 6, 20);
             ctx.fillRect(player.width / 2, -player.height / 2 + 5 + armSwingRight, 6, 20);
             ctx.fillRect(-player.width / 2, -player.height / 2, player.width, player.height);
+            
+            // Head and Face
             ctx.fillStyle = '#f3d9b1';
             ctx.beginPath();
             ctx.arc(0, -player.height/2, player.width/2.5, 0, Math.PI * 2);
             ctx.fill();
-            ctx.strokeStyle = '#333';
-            ctx.lineWidth = 4;
-            ctx.beginPath();
-            ctx.arc(0, -player.height/2, player.width/2, Math.PI, Math.PI * 2);
-            ctx.stroke();
-            ctx.fillStyle = '#555';
+
+            // Beekeeper outfit for James
+            if (player.characterId === 'james') {
+                // Hat
+                ctx.fillStyle = '#d2b48c';
+                ctx.beginPath();
+                ctx.ellipse(0, -player.height/2 - 5, player.width/1.5, 5, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillRect(-player.width/3, -player.height/2 - 10, player.width/1.5, 5);
+                // Veil
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                ctx.fillRect(-player.width/1.8, -player.height/2, player.width * 1.1, player.height * 0.8);
+            } else { // Headset for others
+                 ctx.strokeStyle = '#333';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.arc(0, -player.height/2, player.width/2, Math.PI, Math.PI * 2);
+                ctx.stroke();
+                ctx.fillStyle = '#555';
                 ctx.fillRect(-player.width/2 - 2, -player.height/2 - 5, 10, 10);
+            }
+
             ctx.restore();
         }
 
@@ -530,10 +820,8 @@
                 ctx.save();
                 const yBob = Math.sin(dev.animationFrame * 0.2) * 2;
                 ctx.translate(dev.x + dev.width / 2, dev.y + dev.height / 2 + yBob);
-                
                 const armSwing = Math.sin(dev.animationFrame * 0.3) * 5;
                 const legSwing = Math.cos(dev.animationFrame * 0.3) * 5;
-
                 ctx.fillStyle = '#4b5563';
                 ctx.fillRect(-dev.width / 4 - 4, dev.height / 2 - 8, 8, 15 + legSwing);
                 ctx.fillRect(dev.width / 4 - 4, dev.height / 2 - 8, 8, 15 - legSwing);
@@ -551,12 +839,10 @@
         
         function drawFirewallAura() {
             if (!player.powerUps.firewall) return;
-            
             const firewall = player.powerUps.firewall;
             const pulse = Math.sin(Date.now() * 0.01) * 10;
             const radius = firewall.radius + pulse;
             const alpha = 0.2 + Math.sin(Date.now() * 0.01) * 0.1;
-            
             ctx.save();
             ctx.beginPath();
             ctx.arc(player.x + player.width / 2, player.y + player.height / 2, radius, 0, Math.PI * 2);
@@ -566,6 +852,30 @@
             ctx.lineWidth = 3;
             ctx.stroke();
             ctx.restore();
+        }
+
+        function drawMelee() {
+            if (player.melee && player.melee.active) {
+                ctx.save();
+                const progress = 1 - (player.melee.timer / 10);
+                const alpha = 1 - progress;
+
+                ctx.translate(player.x + player.width/2, player.y + player.height/2);
+                ctx.rotate(player.angle);
+                
+                ctx.fillStyle = `rgba(255, 255, 0, ${alpha * 0.5})`;
+                ctx.strokeStyle = `rgba(255, 255, 255, ${alpha * 0.8})`;
+                ctx.lineWidth = 3;
+
+                ctx.beginPath();
+                ctx.moveTo(0,0);
+                ctx.arc(0, 0, player.melee.range * progress, -Math.PI/4, Math.PI/4);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.restore();
+            }
         }
 
         function drawAIBlast() {
@@ -585,11 +895,8 @@
                 ctx.save();
                 ctx.translate(r.x, r.y);
                 ctx.rotate(r.angle + Math.PI / 2);
-                
                 ctx.shadowColor = '#00ffff';
                 ctx.shadowBlur = 20;
-
-                // Body
                 ctx.fillStyle = '#e0e7ff';
                 ctx.beginPath();
                 ctx.moveTo(0, -r.size / 2);
@@ -597,13 +904,26 @@
                 ctx.lineTo(r.size / 2, r.size / 2);
                 ctx.closePath();
                 ctx.fill();
-
-                // Eye
                 ctx.fillStyle = '#00ffff';
                 ctx.beginPath();
                 ctx.arc(0, -r.size / 4, r.size / 6, 0, Math.PI * 2);
                 ctx.fill();
+                ctx.restore();
+            });
+        }
 
+        function drawBees() {
+            bees.forEach(b => {
+                ctx.save();
+                ctx.translate(b.x, b.y);
+                ctx.rotate(b.angle);
+                const pulse = Math.sin(Date.now() * 0.1) * 0.1 + 1;
+                ctx.fillStyle = 'yellow';
+                ctx.beginPath();
+                ctx.ellipse(0, 0, b.size * pulse, b.size/2 * pulse, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = 'black';
+                ctx.fillRect(-b.size * pulse, -b.size/6 * pulse, b.size*2 * pulse, b.size/3 * pulse);
                 ctx.restore();
             });
         }
@@ -634,16 +954,12 @@
 
                     ctx.shadowColor = color;
                     ctx.shadowBlur = shadowBlur + Math.sin(Date.now() * 0.02) * 5;
-                    
                     ctx.fillStyle = '#9ca3af';
                     ctx.fillRect(-size/4, size/4, size/2, size/3);
-                    
                     ctx.fillStyle = color;
                     ctx.beginPath();
                     ctx.arc(0, 0, size/2.5, 0, Math.PI * 2);
                     ctx.fill();
-
-                    // Add a "shine" effect
                     ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
                     ctx.beginPath();
                     ctx.arc(-size/6, -size/6, size/8, 0, Math.PI*2);
@@ -656,7 +972,6 @@
                     ctx.fillStyle = '#f97316';
                     ctx.textBaseline = 'middle';
                     ctx.textAlign = 'center';
-                    
                     const alpha = 0.7 + Math.sin(Date.now() * 0.01) * 0.3;
                     ctx.globalAlpha = alpha;
                     ctx.fillText('101', 0, 0);
@@ -668,15 +983,11 @@
         // --- Enemy Logic ---
         function spawnEnemy() {
             const type = Math.random() < 0.3 ? 'urgent' : 'standard';
-            
             let deskTarget;
             const availableDesks = backgroundScenery.filter(item => item.type === 'desk' && !item.occupied);
-            if (availableDesks.length === 0) {
-                return; // No desks left, can't spawn.
-            }
+            if (availableDesks.length === 0) return;
 
             if (wave === 1) {
-                // Find nearest available desk to player for wave 1
                 let nearest = null;
                 let nearestDist = Infinity;
                 availableDesks.forEach(desk => {
@@ -688,19 +999,16 @@
                 });
                 deskTarget = nearest;
             } else {
-                // Pick a random available desk for other waves
                 deskTarget = availableDesks[Math.floor(Math.random() * availableDesks.length)];
             }
-            
-            if (!deskTarget) return; // Failsafe
-
+            if (!deskTarget) return;
             deskTarget.occupied = true;
 
             const enemyData = {
                 x: deskTarget.x, y: deskTarget.y,
                 animationFrame: Math.floor(Math.random() * 100),
-                state: 'working', // Start working immediately
-                stateTimer: (1 + Math.random() * 2) * 60, // 1-3 seconds
+                state: 'working',
+                stateTimer: (1 + Math.random() * 2) * 60,
                 deskTarget: deskTarget,
                 printerTarget: null,
                 frustrationTimer: 0,
@@ -708,6 +1016,7 @@
                 emoteTimer: 0,
                 bubbleText: [],
                 firewallHitTimer: 0,
+                beeHitTimer: 0,
             };
 
             if (type === 'urgent') {
@@ -733,15 +1042,15 @@
                 const e = enemies[i];
                 e.animationFrame++;
                 if (e.firewallHitTimer > 0) e.firewallHitTimer--;
+                if (e.beeHitTimer > 0) e.beeHitTimer--;
 
-                // Check for death from any source (firewall, etc.)
                 if (e.hp <= 0) {
                     if (e.deskTarget) e.deskTarget.occupied = false;
-                    if (Math.random() < 0.2) spawnPowerUp(e.x, e.y); // 20% drop chance
+                    if (Math.random() < 0.2) spawnPowerUp(e.x, e.y);
                     xpGems.push({ x: e.x + e.width / 2, y: e.y + e.height / 2, value: e.xpValue });
                     enemies.splice(i, 1);
                     score++;
-                    continue; // Skip to next enemy
+                    continue;
                 }
 
                 switch(e.state) {
@@ -754,36 +1063,27 @@
                         }
                         break;
                     case 'walkingToPrinter':
-                        if (!e.printerTarget) { // No printers, just get angry
-                            e.state = 'angry';
-                            e.frustrationTimer = 60;
-                            break;
-                        }
+                        if (!e.printerTarget) { e.state = 'angry'; e.frustrationTimer = 60; break; }
                         const angleToPrinter = getAngle(e.x, e.y, e.printerTarget.x, e.printerTarget.y);
                         e.x += Math.cos(angleToPrinter) * (e.speed / 2);
                         e.y += Math.sin(angleToPrinter) * (e.speed / 2);
                         if (Math.hypot(e.x - e.printerTarget.x, e.y - e.printerTarget.y) < 10) {
                             e.state = 'usingPrinter';
-                            e.stateTimer = 1.5 * 60; // 1.5 seconds
+                            e.stateTimer = 1.5 * 60;
                         }
                         break;
                     case 'usingPrinter':
                         e.stateTimer--;
-                        if (e.stateTimer <= 0) {
-                            e.state = 'walkingBackToDesk';
-                        }
+                        if (e.stateTimer <= 0) e.state = 'walkingBackToDesk';
                         break;
                     case 'walkingBackToDesk':
-                        if (!e.deskTarget) { // Failsafe, just get angry
-                            e.state = 'angry';
-                            break;
-                        }
+                        if (!e.deskTarget) { e.state = 'angry'; break; }
                         const angleToDesk = getAngle(e.x, e.y, e.deskTarget.x, e.deskTarget.y);
                         e.x += Math.cos(angleToDesk) * (e.speed / 2);
                         e.y += Math.sin(angleToDesk) * (e.speed / 2);
                         if (Math.hypot(e.x - e.deskTarget.x, e.y - e.deskTarget.y) < 10) {
                             e.state = 'fuming';
-                            e.annoyanceTimer = 5 * 60; // 5 seconds of fuming
+                            e.annoyanceTimer = 5 * 60;
                             e.emoteTimer = 0;
                             e.bubbleText = ["Reporting to", "PaperCut", "Support!"];
                             if (e.deskTarget) e.deskTarget.occupied = true;
@@ -794,14 +1094,13 @@
                         e.emoteTimer--;
                         if (e.emoteTimer <= 0) {
                              e.bubbleText = angryPhrases[Math.floor(Math.random() * angryPhrases.length)];
-                             e.emoteTimer = (1 + Math.random()) * 60; // 1-2 seconds per emote
+                             e.emoteTimer = (1 + Math.random()) * 60;
                         }
-
                         if (e.annoyanceTimer <= 0) {
                             e.state = 'angry';
                             if (e.deskTarget) e.deskTarget.occupied = false;
-                            e.frustrationTimer = 60; // Show '!!!' bubble
-                            e.emoteTimer = 0; // Reset for angry shouting
+                            e.frustrationTimer = 60;
+                            e.emoteTimer = 0;
                         }
                         break;
                     case 'angry':
@@ -809,11 +1108,10 @@
                         e.x += Math.cos(angleToPlayer) * e.speed;
                         e.y += Math.sin(angleToPlayer) * e.speed;
                         if (e.frustrationTimer > 0) e.frustrationTimer--;
-
                         e.emoteTimer--;
                         if (e.emoteTimer <= 0) {
                              e.bubbleText = chasePhrases[Math.floor(Math.random() * chasePhrases.length)];
-                             e.emoteTimer = (1.5 + Math.random()) * 60; // 1.5-2.5 seconds per shout
+                             e.emoteTimer = (1.5 + Math.random()) * 60;
                         }
                         break;
                 }
@@ -827,26 +1125,19 @@
 
                 for (let j = projectiles.length - 1; j >= 0; j--) {
                     const p = projectiles[j];
-                    if (e.state !== 'angry') continue; // Can only damage angry enemies
+                    if (e.state !== 'angry') continue;
                     const pRect = { x: p.x - p.size/2, y: p.y - p.size/2, width: p.size, height: p.size };
                     if (checkCollision(pRect, e)) {
                         e.hp -= p.damage;
                         projectiles.splice(j, 1);
-                        if (e.hp <= 0) {
-                            if (e.deskTarget) e.deskTarget.occupied = false;
-                            if (Math.random() < 0.2) spawnPowerUp(e.x, e.y); // 20% drop chance
-                            xpGems.push({ x: e.x + e.width / 2, y: e.y + e.height / 2, value: e.xpValue });
-                            enemies.splice(i, 1);
-                            score++;
-                            break;
-                        }
+                        if (e.hp <= 0) { break; } // Break inner loop if enemy died
                     }
                 }
             }
             if (enemies.length === 0 && gameState === 'playing') {
                 setGameState('waveClear');
                 waveMessage.text = `WAVE ${wave} CLEARED!`;
-                waveMessage.timer = 3 * 60; // 3 seconds
+                waveMessage.timer = 3 * 60;
                 waveMessage.color = '#4ade80';
             }
         }
@@ -866,17 +1157,23 @@
                     ctx.globalAlpha = 1.0;
                 }
 
+                if (e.beeHitTimer > 0) {
+                    ctx.globalAlpha = 0.5;
+                    ctx.fillStyle = 'yellow';
+                    ctx.fillRect(-e.width / 2, -e.height / 2, e.width, e.height);
+                    ctx.globalAlpha = 1.0;
+                }
+
                 ctx.fillStyle = '#4b5563';
                 ctx.fillRect(-e.width / 4 - 4, e.height / 2 - 8, 8, 15 + legSwing);
                 ctx.fillRect(e.width / 4 - 4, e.height / 2 - 8, 8, 15 - legSwing);
-                
                 const shirtColor = e.state === 'angry' ? '#a855f7' : '#a1a1aa';
                 
                 if (e.state === 'angry') {
                     const armSwing = Math.sin(e.animationFrame * 0.4) * 10;
                     ctx.fillStyle = shirtColor;
-                    ctx.fillRect(-e.width / 2 - 6, -e.height / 2 + 5 + armSwing, 6, 20); // Left arm
-                    ctx.fillRect(e.width / 2, -e.height / 2 + 5 - armSwing, 6, 20); // Right arm
+                    ctx.fillRect(-e.width / 2 - 6, -e.height / 2 + 5 + armSwing, 6, 20);
+                    ctx.fillRect(e.width / 2, -e.height / 2 + 5 - armSwing, 6, 20);
                 } else {
                     const paperColor = e.type === 'urgent' ? '#ef4444' : 'white';
                     ctx.fillStyle = paperColor;
@@ -893,67 +1190,45 @@
                     }
                 }
                 
-                ctx.fillStyle = shirtColor; // Purple for angry, grey for passive
+                ctx.fillStyle = shirtColor;
                 ctx.fillRect(-e.width / 2, -e.height / 2, e.width, e.height);
-                
                 ctx.fillStyle = '#f3d9b1';
                 ctx.beginPath();
                 ctx.arc(0, -e.height/2, e.width/2.5, 0, Math.PI * 2);
                 ctx.fill();
 
                 let textLines = [];
-                let bubbleHeight = 0;
-                let fontSize = 10;
-                let bubbleWidth = 140;
+                let fontSize = 10; let bubbleWidth = 140;
 
-                if (e.state === 'working') {
-                    textLines = ['Typing...'];
-                    fontSize = 12;
-                } else if (e.state === 'usingPrinter') {
-                    textLines = ["Where's my", "print job?!"];
-                } else if (e.state === 'fuming' || e.state === 'angry') {
-                    textLines = e.bubbleText;
-                }
+                if (e.state === 'working') { textLines = ['Typing...']; fontSize = 12; } 
+                else if (e.state === 'usingPrinter') { textLines = ["Where's my", "print job?!"]; } 
+                else if (e.state === 'fuming' || e.state === 'angry') { textLines = e.bubbleText; }
 
                 if (textLines.length > 0) {
-                    bubbleHeight = 20 + textLines.length * 16;
-
-                    ctx.fillStyle = 'white';
-                    ctx.strokeStyle = 'black';
-                    ctx.lineWidth = 2;
+                    const bubbleHeight = 20 + textLines.length * 16;
+                    ctx.fillStyle = 'white'; ctx.strokeStyle = 'black'; ctx.lineWidth = 2;
                     ctx.beginPath();
                     const bubbleY = -e.height - bubbleHeight + 15;
                     ctx.roundRect(-bubbleWidth / 2, bubbleY, bubbleWidth, bubbleHeight, 10);
-                    ctx.fill();
-                    ctx.stroke();
-                    ctx.fillStyle = 'black';
-                    ctx.font = `${fontSize}px "Press Start 2P"`;
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
+                    ctx.fill(); ctx.stroke();
+                    ctx.fillStyle = 'black'; ctx.font = `${fontSize}px "Press Start 2P"`;
+                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                     const startY = bubbleY + bubbleHeight / 2;
                     const totalTextHeight = textLines.length * (fontSize + 2);
                     const initialOffset = -(totalTextHeight / 2) + (fontSize / 2);
-
                     textLines.forEach((line, i) => {
                         ctx.fillText(line, 0, startY + initialOffset + (i * (fontSize + 4)));
                     });
                 }
 
                 if (e.frustrationTimer > 0) {
-                    ctx.fillStyle = 'white';
-                    ctx.strokeStyle = 'black';
-                    ctx.lineWidth = 2;
-                    ctx.beginPath();
-                    ctx.roundRect(-20, -e.height, 40, 30, 10);
-                    ctx.fill();
-                    ctx.stroke();
-                    ctx.fillStyle = 'red';
-                    ctx.font = `20px "Press Start 2P"`;
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
+                    ctx.fillStyle = 'white'; ctx.strokeStyle = 'black'; ctx.lineWidth = 2;
+                    ctx.beginPath(); ctx.roundRect(-20, -e.height, 40, 30, 10);
+                    ctx.fill(); ctx.stroke();
+                    ctx.fillStyle = 'red'; ctx.font = `20px "Press Start 2P"`;
+                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                     ctx.fillText('!!!', 0, -e.height + 15);
                 }
-
                 ctx.restore();
                 
                 if (e.hp < e.maxHp) {
@@ -1011,16 +1286,11 @@
         function presentUpgradeOptions() {
             ui.upgradeOptions.innerHTML = '';
             let availableUpgrades = [...upgrades];
-            
-            if (aiUpgradeUsed) {
-                availableUpgrades = availableUpgrades.filter(u => u.id !== 'useAI');
-            }
-
+            if (aiUpgradeUsed) availableUpgrades = availableUpgrades.filter(u => u.id !== 'useAI');
             const regularUpgrades = availableUpgrades.filter(u => u.type !== 'special');
             if (regularUpgrades.length < 3 && regularUpgrades.length > 0) {
                  availableUpgrades = availableUpgrades.filter(u => u.type !== 'special' || Math.random() < 0.25);
             }
-
             for (let i = 0; i < 3; i++) {
                 if (availableUpgrades.length === 0) break;
                 const randomIndex = Math.floor(Math.random() * availableUpgrades.length);
@@ -1028,10 +1298,7 @@
                 const card = document.createElement('div');
                 card.className = 'upgrade-card bg-gray-800 p-6 rounded-lg border-4 border-yellow-400 cursor-pointer w-64 flex flex-col justify-between';
                 card.innerHTML = `<h2 class="text-lg mb-4 text-yellow-300">${upgrade.name}</h2><p class="text-lg flex-grow">${upgrade.description}</p>`;
-                card.onclick = () => { 
-                    upgrade.apply(player); 
-                    setGameState('playing'); 
-                };
+                card.onclick = () => { upgrade.apply(player); setGameState('playing'); };
                 ui.upgradeOptions.appendChild(card);
             }
         }
@@ -1060,19 +1327,14 @@
         function generateBackground() {
             backgroundScenery = [];
             const deskWidth = 100, deskHeight = 60;
-            const colSpacing = 10; // Space between desks horizontally in a cluster
-            const rowSpacing = 20; // Space between desk rows in a cluster
-            const clusterPadding = 250; // Space between entire clusters of desks
-
-            const clusterCols = 3;
-            const clusterRows = 2;
-            
+            const colSpacing = 10; const rowSpacing = 20;
+            const clusterPadding = 250;
+            const clusterCols = 3; const clusterRows = 2;
             const clusterWidth = (clusterCols * deskWidth) + ((clusterCols - 1) * colSpacing);
             const clusterHeight = (clusterRows * deskHeight) + ((clusterRows - 1) * rowSpacing);
 
             for (let y = clusterPadding; y < world.height - clusterPadding - clusterHeight; y += clusterHeight + clusterPadding) {
                 for (let x = clusterPadding; x < world.width - clusterPadding - clusterWidth; x += clusterWidth + clusterPadding) {
-                    // Place a cluster of desks
                     for (let row = 0; row < clusterRows; row++) {
                         for (let col = 0; col < clusterCols; col++) {
                             const deskX = x + col * (deskWidth + colSpacing);
@@ -1080,18 +1342,14 @@
                             backgroundScenery.push({ type: 'desk', x: deskX, y: deskY, width: deskWidth, height: deskHeight, occupied: false });
                         }
                     }
-
-                    // Place one MFD next to the cluster
                     const mfdX = x + clusterWidth + 50;
-                    const mfdY = y + (clusterHeight / 2) - 40; // Center it vertically
+                    const mfdY = y + (clusterHeight / 2) - 40;
                     if (mfdX < world.width - clusterPadding) {
                          backgroundScenery.push({type: 'mfd', x: mfdX, y: mfdY });
                     }
-                    
-                    // Place one decor item (plant or bin) at the end of a row
-                    if (Math.random() < 0.6) { // 60% chance to place any decor
-                        const decorX = x - 40; // Place to the left of the cluster
-                        const decorY = y + (Math.random() < 0.5 ? 0 : clusterHeight - 20); // Top or bottom row
+                    if (Math.random() < 0.6) {
+                        const decorX = x - 40;
+                        const decorY = y + (Math.random() < 0.5 ? 0 : clusterHeight - 20);
                         const type = Math.random() < 0.5 ? 'plant' : 'trashcan';
                         backgroundScenery.push({ type: type, x: decorX, y: decorY });
                     }
@@ -1120,48 +1378,23 @@
                     ctx.arc(item.x + 20, item.y - 10, 10, 0, Math.PI * 2);
                     ctx.fill();
                 } else if (item.type === 'mfd') {
-                    // Main body - light grey, tall
-                    ctx.fillStyle = '#d1d5db'; 
-                    ctx.fillRect(item.x, item.y, 40, 80);
-
-                    // Scanner unit on top - darker grey, slightly wider
-                    ctx.fillStyle = '#4b5563'; 
-                    ctx.fillRect(item.x - 5, item.y, 50, 20);
-
-                    // Control Panel - medium grey, angled look
-                    ctx.fillStyle = '#6b7280';
-                    ctx.beginPath();
-                    ctx.moveTo(item.x + 5, item.y + 25);
-                    ctx.lineTo(item.x + 35, item.y + 25);
-                    ctx.lineTo(item.x + 40, item.y + 40);
-                    ctx.lineTo(item.x, item.y + 40);
-                    ctx.closePath();
-                    ctx.fill();
-                    
-                    // Control Panel Screen - blue
-                    ctx.fillStyle = '#3b82f6';
-                    ctx.fillRect(item.x + 10, item.y + 30, 20, 5);
-
-                    // Paper output tray slot - dark shadow
-                    ctx.fillStyle = '#374151'; 
-                    ctx.fillRect(item.x, item.y + 45, 40, 8);
-
-                    // Paper in the output tray - white
-                    ctx.fillStyle = 'white'; 
-                    ctx.fillRect(item.x + 5, item.y + 47, 30, 5);
-
-                    // Indication of lower paper trays
-                    ctx.fillStyle = '#6b7280'; // Darker line for tray separation
-                    ctx.fillRect(item.x, item.y + 65, 40, 2);
+                    ctx.fillStyle = '#d1d5db'; ctx.fillRect(item.x, item.y, 40, 80);
+                    ctx.fillStyle = '#4b5563'; ctx.fillRect(item.x - 5, item.y, 50, 20);
+                    ctx.fillStyle = '#6b7280'; ctx.beginPath();
+                    ctx.moveTo(item.x + 5, item.y + 25); ctx.lineTo(item.x + 35, item.y + 25);
+                    ctx.lineTo(item.x + 40, item.y + 40); ctx.lineTo(item.x, item.y + 40);
+                    ctx.closePath(); ctx.fill();
+                    ctx.fillStyle = '#3b82f6'; ctx.fillRect(item.x + 10, item.y + 30, 20, 5);
+                    ctx.fillStyle = '#374151'; ctx.fillRect(item.x, item.y + 45, 40, 8);
+                    ctx.fillStyle = 'white'; ctx.fillRect(item.x + 5, item.y + 47, 30, 5);
+                    ctx.fillStyle = '#6b7280'; ctx.fillRect(item.x, item.y + 65, 40, 2);
                     ctx.fillRect(item.x, item.y + 75, 40, 2);
                 } else if (item.type === 'trashcan') {
-                    ctx.fillStyle = '#6b7280'; // Grey
-                    ctx.beginPath();
+                    ctx.fillStyle = '#6b7280'; ctx.beginPath();
                     ctx.ellipse(item.x + 15, item.y + 28, 15, 5, 0, 0, Math.PI * 2);
                     ctx.fill();
                     ctx.fillRect(item.x, item.y, 30, 30);
-                    ctx.fillStyle = '#4b5563'; // Darker grey rim
-                    ctx.beginPath();
+                    ctx.fillStyle = '#4b5563'; ctx.beginPath();
                     ctx.ellipse(item.x + 15, item.y, 15, 5, 0, 0, Math.PI * 2);
                     ctx.fill();
                 }
@@ -1170,8 +1403,9 @@
         
         // --- Power-up Logic ---
         function spawnPowerUp(x, y) {
-            const types = ['rapidFire', 'splitShot', 'damageBoost', 'coffee', 'firewall'];
-            const type = types[Math.floor(Math.random() * types.length)];
+            const commonTypes = ['rapidFire', 'splitShot', 'damageBoost', 'coffee', 'firewall'];
+            let type = commonTypes[Math.floor(Math.random() * commonTypes.length)];
+            if (Math.random() < 0.15) type = 'espresso';
             powerUps.push({ x, y, type, size: 20 });
         }
 
@@ -1180,18 +1414,11 @@
                 const p = powerUps[i];
                 const pRect = { x: p.x - p.size/2, y: p.y - p.size/2, width: p.size, height: p.size };
                 if (checkCollision(player, pRect)) {
-                    if (p.type === 'firewall') {
-                        player.powerUps[p.type] = { 
-                            timer: 15 * 60, // 15 seconds
-                            radius: 150,
-                            damage: 5,
-                            cooldown: 0
-                        };
-                    } else if (p.type === 'coffee') {
-                         player.powerUps[p.type] = { timer: 10 * 60 }; // 10 seconds
-                    } else {
-                         player.powerUps[p.type] = { timer: 20 * 60 }; // 20 seconds for others
-                    }
+                    const durationMultiplier = player.powerUpDurationMultiplier || 1;
+                    if (p.type === 'firewall') player.powerUps[p.type] = { timer: 15 * 60, radius: 150, damage: 5, cooldown: 0 };
+                    else if (p.type === 'coffee') player.powerUps[p.type] = { timer: (10 * 60) * durationMultiplier }; 
+                    else if (p.type === 'espresso') player.powerUps[p.type] = { timer: (5 * 60) * durationMultiplier };
+                    else player.powerUps[p.type] = { timer: 20 * 60 };
                     powerUps.splice(i, 1);
                 }
             }
@@ -1201,37 +1428,25 @@
             powerUps.forEach(p => {
                 ctx.save();
                 ctx.translate(p.x, p.y);
-                
                 const pulse = Math.sin(Date.now() * 0.005) * 5;
                 ctx.shadowColor = 'yellow';
                 ctx.shadowBlur = 15 + pulse;
-
                 ctx.fillStyle = 'rgba(255, 255, 0, 0.7)';
                 ctx.beginPath();
                 ctx.arc(0, 0, p.size + pulse/2, 0, Math.PI * 2);
                 ctx.fill();
-
-                ctx.shadowBlur = 0; // reset shadow for text
+                ctx.shadowBlur = 0;
                 ctx.font = `${p.size}px "Press Start 2P"`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                
-                if (p.type === 'rapidFire') {
-                    ctx.fillStyle = '#3b82f6';
-                    ctx.fillText('>>', 0, 0);
-                } else if (p.type === 'splitShot') {
-                    ctx.fillStyle = '#22c55e';
-                    ctx.fillText('…', 0, 0);
-                } else if (p.type === 'damageBoost') {
-                    ctx.fillStyle = '#ef4444';
-                    ctx.fillText('+', 0, 0);
-                } else if (p.type === 'coffee') {
-                    ctx.fillStyle = '#854d0e';
-                    ctx.fillText('☕', 0, 0);
-                } else if (p.type === 'firewall') {
-                    ctx.fillStyle = '#f97316';
-                    ctx.fillText('#', 0, 0);
-                }
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                if (p.type === 'rapidFire') { ctx.fillStyle = '#3b82f6'; ctx.fillText('>>', 0, 0); } 
+                else if (p.type === 'splitShot') { ctx.fillStyle = '#22c55e'; ctx.fillText('…', 0, 0); } 
+                else if (p.type === 'damageBoost') { ctx.fillStyle = '#ef4444'; ctx.fillText('+', 0, 0); } 
+                else if (p.type === 'coffee') { ctx.fillStyle = '#854d0e'; ctx.fillText('☕', 0, 0); } 
+                else if (p.type === 'espresso') {
+                    ctx.fillStyle = '#6b21a8'; ctx.fillText('☕', 0, 0);
+                    ctx.fillStyle = 'yellow'; ctx.font = `${p.size * 1.2}px "Press Start 2P"`;
+                    ctx.fillText('⚡', 5, -5);
+                } else if (p.type === 'firewall') { ctx.fillStyle = '#f97316'; ctx.fillText('#', 0, 0); }
                 ctx.restore();
             });
         }
@@ -1241,29 +1456,21 @@
             wave++;
             difficultyMultiplier = 1 + (wave * 0.1);
             const numEnemies = 10 + wave * 2;
-            for (let i = 0; i < numEnemies; i++) {
-                spawnEnemy();
-            }
+            for (let i = 0; i < numEnemies; i++) spawnEnemy();
             gameState = 'playing';
         }
 
         function updateWaveState() {
-            if (waveMessage.timer > 0) {
-                waveMessage.timer--;
-            }
-
+            if (waveMessage.timer > 0) waveMessage.timer--;
             if (gameState === 'waveClear' && waveMessage.timer <= 0) {
                 gameState = 'waveCountdown';
                 waveMessage.text = `NEXT WAVE IN 5...`;
-                waveMessage.timer = 5 * 60; // 5 seconds
+                waveMessage.timer = 5 * 60;
                 waveMessage.color = 'yellow';
             }
-
             if (gameState === 'waveCountdown') {
                 waveMessage.text = `NEXT WAVE IN ${Math.ceil(waveMessage.timer / 60)}...`;
-                if (waveMessage.timer <= 0) {
-                    startNextWave();
-                }
+                if (waveMessage.timer <= 0) startNextWave();
             }
         }
 
@@ -1272,10 +1479,8 @@
                 ctx.save();
                 ctx.fillStyle = waveMessage.color;
                 ctx.font = '32px "Press Start 2P"';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.shadowColor = 'black';
-                ctx.shadowBlur = 5;
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.shadowColor = 'black'; ctx.shadowBlur = 5;
                 ctx.fillText(waveMessage.text, canvas.width / 2, canvas.height / 8);
                 ctx.restore();
             }
@@ -1285,37 +1490,17 @@
         function gameLoop() {
             if (gameState === 'playing' || gameState === 'waveClear' || gameState === 'waveCountdown') {
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
-                
-                updatePlayer();
-                updateDevs();
-                updateAIBlast();
-                updateAIRobots();
-                updateProjectiles();
+                updatePlayer(); updateDevs(); updateAIBlast(); updateAIRobots();
+                updateSwarm(); updateBees(); updateProjectiles();
                 if (gameState === 'playing') updateEnemies();
-                updateXpGems();
-                updatePowerUps();
-                updateCamera();
-                updateUI();
-                updateWaveState();
-
+                updateXpGems(); updatePowerUps(); updateCamera(); updateUI(); updateWaveState();
                 ctx.save();
                 ctx.translate(-camera.x, -camera.y);
-
-                drawBackground();
-                drawXpGems();
-                drawPowerUps();
-                drawEnemies();
-                drawPlayer();
-                drawFirewallAura();
-                drawDevs();
-                drawProjectiles();
-                drawAIBlast();
-                drawAIRobots();
-                
+                drawBackground(); drawXpGems(); drawPowerUps(); drawEnemies();
+                drawPlayer(); drawFirewallAura(); drawMelee(); drawDevs(); drawProjectiles();
+                drawAIBlast(); drawAIRobots(); drawBees();
                 ctx.restore();
-
-                drawWaveMessage();
-                drawMinimap();
+                drawWaveMessage(); drawMinimap();
             }
             requestAnimationFrame(gameLoop);
         }
@@ -1325,18 +1510,14 @@
             const minimapCtx = minimap.getContext('2d');
             const scaleX = minimap.width / world.width;
             const scaleY = minimap.height / world.height;
-
             minimapCtx.fillStyle = 'rgba(100, 100, 100, 0.5)';
             minimapCtx.fillRect(0, 0, minimap.width, minimap.height);
-
             minimapCtx.fillStyle = 'white';
             minimapCtx.fillRect(player.x * scaleX - 2, player.y * scaleY - 2, 4, 4);
-
             enemies.forEach(e => {
                 minimapCtx.fillStyle = e.state === 'angry' ? '#a855f7' : '#d1d5db';
                 minimapCtx.fillRect(e.x * scaleX - 1, e.y * scaleY - 1, 2, 2);
             });
-            
             minimapCtx.strokeStyle = 'white';
             minimapCtx.lineWidth = 1;
             minimapCtx.strokeRect(camera.x * scaleX, camera.y * scaleY, canvas.width * scaleX, canvas.height * scaleY);
@@ -1351,16 +1532,20 @@
             mouse.x = e.clientX - rect.left;
             mouse.y = e.clientY - rect.top;
         });
-        ui.startButton.addEventListener('click', () => { setGameState('playing'); init(); });
-        ui.restartButton.addEventListener('click', () => { setGameState('playing'); init(); });
+        ui.restartButton.addEventListener('click', () => { 
+            setGameState('start'); 
+            setupCharacterSelection(); 
+        });
 
         // --- Initial Call ---
-        init();
+        setupCharacterSelection();
         setGameState('start');
         gameLoop();
     </script>
 </body>
 </html>
+
+
 
 
 
